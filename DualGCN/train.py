@@ -25,6 +25,8 @@ from models.dualgcn import DualGCNClassifier
 from models.dualgcn_bert import DualGCNBertClassifier
 from data_utils import SentenceDataset, build_tokenizer, build_embedding_matrix, Tokenizer4BertGCN, ABSAGCNData
 from prepare_vocab import VocabHelp
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
 
 # 设置日志
 logger = logging.getLogger()
@@ -318,7 +320,7 @@ def main():
         'sgd': torch.optim.SGD,
     }
 
-    # Hyperparameters
+    # 超参
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name', default='dualgcn', type=str, help=', '.join(model_classes.keys()))
     parser.add_argument('--dataset', default='laptop', type=str, help=', '.join(dataset_files.keys()))
@@ -363,7 +365,8 @@ def main():
     parser.add_argument('--beta', default=0.25, type=float)
 
     # * bert
-    parser.add_argument('--pretrained_bert_name', default='bert-base-uncased', type=str)
+    parser.add_argument('--pretrained_bert_name', default='/Users/cuixiyong/PycharmProjects/DualGCN-ABSA/BERT/bert'
+                                                          '-base-uncased', type=str)
     parser.add_argument("--adam_epsilon", default=1e-8, type=float, help="Epsilon for Adam optimizer.")
     parser.add_argument('--bert_dim', type=int, default=768)
     parser.add_argument('--bert_dropout', type=float, default=0.3, help='BERT dropout rate.')
