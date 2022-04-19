@@ -20,6 +20,7 @@ class DualGCNClassifier(nn.Module):
         in_dim = opt.hidden_dim
         self.opt = opt
         self.gcn_model = GCNAbsaModel(embedding_matrix=embedding_matrix, opt=opt)
+        # 设置网络的全连接输出层
         self.classifier = nn.Linear(in_dim*2, opt.polarities_dim)
 
     def forward(self, inputs):
@@ -88,6 +89,7 @@ class GCNAbsaModel(nn.Module):
         outputs2 = (h2*mask).sum(dim=1) / asp_wn
         
         return outputs1, outputs2, adj_ag, adj_dep
+
 
 class GCN(nn.Module):
     def __init__(self, opt, embeddings, mem_dim, num_layers):

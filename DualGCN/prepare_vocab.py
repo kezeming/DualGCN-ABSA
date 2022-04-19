@@ -8,6 +8,7 @@ import argparse
 import numpy as np
 from collections import Counter
 
+
 class VocabHelp(object):
     def __init__(self, counter, specials=['<pad>', '<unk>']):
         self.pad_index = 0
@@ -26,7 +27,6 @@ class VocabHelp(object):
 
         # stoi is simply a reverse dict for itos
         self.stoi = {tok: i for i, tok in enumerate(self.itos)}
-
 
     def __eq__(self, other):
         if self.stoi != other.stoi:
@@ -54,6 +54,7 @@ class VocabHelp(object):
     def save_vocab(self, vocab_path):
         with open(vocab_path, "wb") as f:
             pickle.dump(self, f)
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Prepare vocab for relation extraction.')
@@ -117,6 +118,7 @@ def main():
     pol_vocab.save_vocab(vocab_pol_file)
     print("all done.")
 
+
 def load_tokens(filename):
     with open(filename) as infile:
         data = json.load(infile)
@@ -131,6 +133,7 @@ def load_tokens(filename):
             max_len = max(len(d['token']), max_len)
     print("{} tokens from {} examples loaded from {}.".format(len(tokens), len(data), filename))
     return tokens, pos, dep, max_len
+
 
 if __name__ == '__main__':
     main()

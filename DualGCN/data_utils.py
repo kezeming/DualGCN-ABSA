@@ -36,26 +36,30 @@ def ParseData(data_path):
                 head = list(d['head'])       # head
                 deprel = list(d['deprel'])   # deprel
                 # position
+                # 算出对应的位置编码，观点词左边用负数偏移量填充，观点词用0填充，观点词右边用正数偏移量填充
                 aspect_post = [aspect['from'], aspect['to']] 
-                post = [i-aspect['from'] for i in range(aspect['from'])] \
-                       +[0 for _ in range(aspect['from'], aspect['to'])] \
-                       +[i-aspect['to']+1 for i in range(aspect['to'], length)]
+                post = [i-aspect['from'] for i in range(aspect['from'])] + \
+                       [0 for _ in range(aspect['from'], aspect['to'])] + \
+                       [i-aspect['to']+1 for i in range(aspect['to'], length)]
                 # aspect mask
+                # 将方面词对应的范围用1掩码，其余都用0填充
                 if len(asp) == 0:
                     mask = [1 for _ in range(length)]    # for rest16
                 else:
-                    mask = [0 for _ in range(aspect['from'])] \
-                       +[1 for _ in range(aspect['from'], aspect['to'])] \
-                       +[0 for _ in range(aspect['to'], length)]
+                    mask = [0 for _ in range(aspect['from'])] + \
+                           [1 for _ in range(aspect['from'], aspect['to'])] + \
+                           [0 for _ in range(aspect['to'], length)]
                 
-                sample = {'text': tok, 'aspect': asp, 'pos': pos, 'post': post, 'head': head,\
-                          'deprel': deprel, 'length': length, 'label': label, 'mask': mask, \
+                sample = {'text': tok, 'aspect': asp, 'pos': pos, 'post': post, 'head': head,
+                          'deprel': deprel, 'length': length, 'label': label, 'mask': mask,
                           'aspect_post': aspect_post, 'text_list': text_list}
                 all_data.append(sample)
 
     return all_data
 
 
+# 若指定目录data_file下有分词器，直接加载；
+# 若无，则新建一个分词器；
 def build_tokenizer(fnames, max_length, data_file):
     parse = ParseData
     if os.path.exists(data_file):
@@ -68,7 +72,7 @@ def build_tokenizer(fnames, max_length, data_file):
 
 
 class Vocab(object):
-    ''' vocabulary of dataset '''
+    """ vocabulary of dataset """
     def __init__(self, vocab_list, add_pad, add_unk):
         self._vocab_dict = dict()
         self._reverse_vocab_dict = dict()
@@ -116,7 +120,7 @@ class Vocab(object):
 
 
 class Tokenizer(object):
-    ''' transform text to indices '''
+    """ transform text to indices """
     def __init__(self, vocab, max_length, lower, pos_char_to_int, pos_int_to_char):
         self.vocab = vocab
         self.max_length = max_length
@@ -134,6 +138,7 @@ class Tokenizer(object):
                 text_raw = obj['text']
                 if lower:
                     text_raw = text_raw.lower()
+                # 合并集合，即更新语料库
                 corpus.update(Tokenizer.split_text(text_raw)) 
         return cls(vocab=Vocab(corpus, add_pad=True, add_unk=True), max_length=max_length, lower=lower, pos_char_to_int=pos_char_to_int, pos_int_to_char=pos_int_to_char)
     
@@ -233,20 +238,22 @@ class SentenceDataset(Dataset):
     def __len__(self):
         return len(self._data)
 
+
 def _load_wordvec(data_path, embed_dim, vocab=None):
     with open(data_path, 'r', encoding='utf-8', newline='\n', errors='ignore') as f:
         word_vec = dict()
         if embed_dim == 200:
             for line in f:
                 tokens = line.rstrip().split()
-                if tokens[0] == '<pad>' or tokens[0] == '<unk>': # avoid them
+                if tokens[0] == '<pad>' or tokens[0] == '<unk>':  # avoid them
                     continue
                 if vocab is None or vocab.has_word(tokens[0]):
+                    # 转换为 ndarray 对象，主要区别在于 array 将会copy该对象，而 np.asarray 除非必要，否则不会copy该对象。
                     word_vec[tokens[0]] = np.asarray(tokens[1:], dtype='float32')
         elif embed_dim == 300:
             for line in f:
                 tokens = line.rstrip().split()
-                if tokens[0] == '<pad>': # avoid them
+                if tokens[0] == '<pad>':  # avoid them
                     continue
                 elif tokens[0] == '<unk>':
                     word_vec['<unk>'] = np.random.uniform(-0.25, 0.25, 300)
@@ -258,6 +265,7 @@ def _load_wordvec(data_path, embed_dim, vocab=None):
             exit()
             
         return word_vec
+
 
 def build_embedding_matrix(vocab, embed_dim, data_file):
     if os.path.exists(data_file):

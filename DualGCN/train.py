@@ -55,10 +55,12 @@ class Instructor:
             trainset = ABSAGCNData(opt.dataset_file['train'], tokenizer, opt=opt)
             testset = ABSAGCNData(opt.dataset_file['test'], tokenizer, opt=opt)
         else:
+            # 创建分词器
             tokenizer = build_tokenizer(
                 fnames=[opt.dataset_file['train'], opt.dataset_file['test']],
                 max_length=opt.max_length,
                 data_file='{}/{}_tokenizer.dat'.format(opt.vocab_dir, opt.dataset))
+            # 创建vocab词汇表对应的embedding矩阵
             embedding_matrix = build_embedding_matrix(
                 vocab=tokenizer.vocab,
                 embed_dim=opt.embed_dim,
