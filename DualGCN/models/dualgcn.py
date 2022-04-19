@@ -92,41 +92,48 @@ class GCNAbsaModel(nn.Module):
 
 
 class GCN(nn.Module):
+    # opt参数，embedding方式，隐藏层维度，层数
     def __init__(self, opt, embeddings, mem_dim, num_layers):
         super(GCN, self).__init__()
         self.opt = opt
         self.layers = num_layers
         self.mem_dim = mem_dim
+        # 输入维度 = embedding维度 + 位置维度 + 词性维度
         self.in_dim = opt.embed_dim+opt.post_dim+opt.pos_dim
         self.emb, self.pos_emb, self.post_emb = embeddings
 
         # rnn layer
         input_size = self.in_dim
-        self.rnn = nn.LSTM(input_size, opt.rnn_hidden, opt.rnn_layers, batch_first=True, \
-                dropout=opt.rnn_dropout, bidirectional=opt.bidirect)
+        # LSTM(input_size=360, hidden_size=50, nums_layer=1, input_format=(batch, seq_len, input_size), dropout=0.1,
+        #      bidirectional=True)
+        self.rnn = nn.LSTM(input_size, opt.rnn_hidden, opt.rnn_layers, batch_first=True,
+                           dropout=opt.rnn_dropout, bidirectional=opt.bidirect)
         if opt.bidirect:
             self.in_dim = opt.rnn_hidden * 2
         else:
             self.in_dim = opt.rnn_hidden
 
-        # drop out
+        # 设置 drop out
         self.rnn_drop = nn.Dropout(opt.rnn_dropout)
         self.in_drop = nn.Dropout(opt.input_dropout)
         self.gcn_drop = nn.Dropout(opt.gcn_dropout)
 
         # gcn layer
-        self.W = nn.ModuleList()
+        self.W = nn.ModuleList()  # 存放多个子Module，子module自动注册到整个网络上，同时param也会添加到整个网络中
         for layer in range(self.layers):
             input_dim = self.in_dim if layer == 0 else self.mem_dim
             self.W.append(nn.Linear(input_dim, self.mem_dim))
 
+        # attention 模块
         self.attention_heads = opt.attention_heads
         self.attn = MultiHeadAttention(self.attention_heads, self.mem_dim*2)
+
         self.weight_list = nn.ModuleList()
         for j in range(self.layers):
             input_dim = self.in_dim if j == 0 else self.mem_dim
             self.weight_list.append(nn.Linear(input_dim, self.mem_dim))
 
+        # 双向交互模块，将SynGCN和SemGCN提取的特征进行交互
         self.affine1 = nn.Parameter(torch.Tensor(self.mem_dim, self.mem_dim))
         self.affine2 = nn.Parameter(torch.Tensor(self.mem_dim, self.mem_dim))
 
@@ -228,10 +235,9 @@ def clones(module, N):
 
 
 class MultiHeadAttention(nn.Module):
-
     def __init__(self, h, d_model, dropout=0.1):
         super(MultiHeadAttention, self).__init__()
-        assert d_model % h == 0
+        assert d_model % h == 0, "d_model % h != 0 ERROR"
         self.d_k = d_model // h
         self.h = h
         self.linears = clones(nn.Linear(d_model, d_model), 2)
