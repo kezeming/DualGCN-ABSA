@@ -200,19 +200,23 @@ class SentenceDataset(Dataset):
             mask = tokenizer.pad_sequence(obj['mask'], pad_id=opt.pad_id, maxlen=opt.max_length, dtype='int64', padding='post', truncating='post')
 
             adj = np.ones(opt.max_length) * opt.pad_id
+            # parseadj 即 "dependency probability"
             if opt.parseadj:
-                from absa_parser import headparser
+                from absa_parser import headparser  # 加载LAL-Parse的best_model
                 # * adj
                 headp, syntree = headparser.parse_heads(obj['text'])
+                # adj就是个邻接矩阵，零和非零元素填充
                 adj = softmax(headp[0])
-                adj = np.delete(adj, 0, axis=0)
-                adj = np.delete(adj, 0, axis=1)
-                adj -= np.diag(np.diag(adj))
+                adj = np.delete(adj, 0, axis=0)  # 删除第一行
+                adj = np.delete(adj, 0, axis=1)  # 在上一步之后删除第一列
+                adj -= np.diag(np.diag(adj))  # 将adj对角线上的元素置0
+                # 如果是无向图
                 if not opt.direct:
-                    adj = adj + adj.T
-                adj = adj + np.eye(adj.shape[0])
+                    adj = adj + adj.T  # adj.T即adj的转置
+                adj = adj + np.eye(adj.shape[0])  # eye()返回的是一个单位矩阵
                 adj = np.pad(adj, (0, opt.max_length - adj.shape[0]), 'constant')
-            
+
+            # parsehead 即 "dependency tree"
             if opt.parsehead:
                 from absa_parser import headparser
                 headp, syntree = headparser.parse_heads(obj['text'])

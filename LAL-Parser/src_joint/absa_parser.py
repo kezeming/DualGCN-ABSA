@@ -34,12 +34,15 @@ class ParseHead(object):
         self.parser.contributions = (config.contributions == 1)
 
     def parse_heads(self, sentence):
+        # 关闭BatchNormalization和Dropout，以免影响我们的预测结果
         self.parser.eval()
-        with torch.no_grad():
+        with torch.no_grad():  # 不去track操作，避免图的构建
             sentence = sentence.strip()
             split_mothod = lambda x: x.split(' ')
             tagged_sentences = [[(REVERSE_TOKEN_MAPPING.get(tag, tag), REVERSE_TOKEN_MAPPING.get(word, word)) for word, tag in nltk.pos_tag(split_mothod(sentence))]]
-            syntree, _, arc = self.parser.parse_batch(tagged_sentences) 
+            # 通过LAL-Parse构建出了Syn语法树
+            # head是从tree中得到的，tree是从parse_from_annotations中得到的
+            syntree, _, arc = self.parser.parse_batch(tagged_sentences)
             arc_np = np.asarray(arc, dtype='float32')
 
         return arc_np, syntree
