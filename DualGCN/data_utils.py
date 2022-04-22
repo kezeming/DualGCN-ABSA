@@ -144,15 +144,21 @@ class Tokenizer(object):
     
     @staticmethod
     def pad_sequence(sequence, pad_id, maxlen, dtype='int64', padding='post', truncating='post'):
+        # x=[pad_id, pad_id, pad_id, ..., pad_id]  len(x)=maxlen
+        # sequence理解为token对应的索引id个数，即token个数；pid_id即为token=<pad>的索引，即0
         x = (np.zeros(maxlen) + pad_id).astype(dtype)
         if truncating == 'pre':
+            # 截取sequence后面的maxlen个，即删除前面多余的token
             trunc = sequence[-maxlen:] 
         else:
+            # 截取sequence前面的maxlen个，即删除后面多余的token
             trunc = sequence[:maxlen]
         trunc = np.asarray(trunc, dtype=dtype)
         if padding == 'post':
+            # 将x的前trunc部分替换为idx，后半部分为pad_id
             x[:len(trunc)] = trunc 
         else:
+            # 将x的后trunc部分替换为idx，前半部分为pad_id
             x[-len(trunc):] = trunc
         return x
     
@@ -176,13 +182,12 @@ class Tokenizer(object):
 
 
 class SentenceDataset(Dataset):
-    ''' PyTorch standard dataset class '''
+    """ PyTorch standard dataset class """
     def __init__(self, fname, tokenizer, opt, vocab_help):
-
         parse = ParseData
         post_vocab, pos_vocab, dep_vocab, pol_vocab = vocab_help
         data = list()
-        polarity_dict = {'positive':0, 'negative':1, 'neutral':2}
+        polarity_dict = {'positive': 0, 'negative': 1, 'neutral': 2}
         for obj in tqdm(parse(fname), total=len(parse(fname)), desc="Training examples"):
             text = tokenizer.text_to_sequence(obj['text'])
             aspect = tokenizer.text_to_sequence(obj['aspect'])  # max_length=10

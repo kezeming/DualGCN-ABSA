@@ -55,10 +55,12 @@ class DualGCNClassifier(nn.Module):
 
 
 class GCNAbsaModel(nn.Module):
+    # embedding_matrix是我们初始时从glove模型中生成的emb查找表
     def __init__(self, embedding_matrix, opt):
         super().__init__()
         self.opt = opt
         self.embedding_matrix = embedding_matrix
+        # 构建三个查找表emb、pos_emb、post_emb，其中emb训练过程中不更新
         self.emb = nn.Embedding.from_pretrained(torch.tensor(embedding_matrix, dtype=torch.float), freeze=True)
         self.pos_emb = nn.Embedding(opt.pos_size, opt.pos_dim, padding_idx=0) if opt.pos_dim > 0 else None  # POS emb
         self.post_emb = nn.Embedding(opt.post_size, opt.post_dim,
@@ -94,24 +96,25 @@ class GCNAbsaModel(nn.Module):
 
 
 class GCN(nn.Module):
-    # opt参数，embedding方式，隐藏层维度，层数
+    # opt参数，embedding方式，GCN的隐藏层dim，层数
     def __init__(self, opt, embeddings, mem_dim, num_layers):
         super(GCN, self).__init__()
         self.opt = opt
         self.layers = num_layers
         self.mem_dim = mem_dim
-        # 输入维度 = embedding维度 + 位置维度 + 词性维度
+        # 输入维度 = 单词embedding维度 + 位置维度 + 词性维度
         self.in_dim = opt.embed_dim + opt.post_dim + opt.pos_dim
-        self.emb, self.pos_emb, self.post_emb = embeddings
+        self.emb, self.pos_emb, self.post_emb = embeddings  # unpack
 
         # rnn layer
         input_size = self.in_dim
-        # LSTM(input_size=360, hidden_size=50, nums_layer=1, input_format=(batch, seq_len, input_size), dropout=0.1,
-        #      bidirectional=True)
+        # LSTM(input_size=360, hidden_size=50, nums_layer=1, input_format=[batch_size, seq_len, input_size(360)],
+        # dropout=0.1, bidirectional=True)
         self.rnn = nn.LSTM(input_size, opt.rnn_hidden, opt.rnn_layers, batch_first=True,
                            dropout=opt.rnn_dropout, bidirectional=opt.bidirect)
+
         if opt.bidirect:
-            self.in_dim = opt.rnn_hidden * 2
+            self.in_dim = opt.rnn_hidden * 2  # 双向RNN将in_dim=改为二倍隐藏层维度
         else:
             self.in_dim = opt.rnn_hidden
 
@@ -126,21 +129,23 @@ class GCN(nn.Module):
             input_dim = self.in_dim if layer == 0 else self.mem_dim
             self.W.append(nn.Linear(input_dim, self.mem_dim))
 
-        # attention 模块
+        # attention 模块(只有一个注意力头)
         self.attention_heads = opt.attention_heads
         self.attn = MultiHeadAttention(self.attention_heads, self.mem_dim * 2)
 
         self.weight_list = nn.ModuleList()
-        for j in range(self.layers):
-            input_dim = self.in_dim if j == 0 else self.mem_dim
+        for layer in range(self.layers):
+            input_dim = self.in_dim if layer == 0 else self.mem_dim
             self.weight_list.append(nn.Linear(input_dim, self.mem_dim))
 
         # 双向交互模块，将SynGCN和SemGCN提取的特征进行交互
+        # nn.Parameter将一个不可训练的tensor转换成可以训练的类型parameter
         self.affine1 = nn.Parameter(torch.Tensor(self.mem_dim, self.mem_dim))
         self.affine2 = nn.Parameter(torch.Tensor(self.mem_dim, self.mem_dim))
 
     def encode_with_rnn(self, rnn_inputs, seq_lens, batch_size):
         h0, c0 = rnn_zero_state(batch_size, self.opt.rnn_hidden, self.opt.rnn_layers, self.opt.bidirect)
+        # pack_padded_sequence将填充过的数据进行压缩，避免填充的值对最终训练产生影响
         rnn_inputs = nn.utils.rnn.pack_padded_sequence(rnn_inputs, seq_lens, batch_first=True, enforce_sorted=False)
         rnn_outputs, (ht, ct) = self.rnn(rnn_inputs, (h0, c0))
         rnn_outputs, _ = nn.utils.rnn.pad_packed_sequence(rnn_outputs, batch_first=True)
