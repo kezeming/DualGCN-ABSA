@@ -4,6 +4,7 @@ version:
 Author: kzm
 Date: 2021-06-09 14:17:37
 """
+import json
 import os
 import sys
 import copy
@@ -88,6 +89,10 @@ class Instructor:
             trainset = SentenceDataset(opt.dataset_file['train'], tokenizer, opt=opt, vocab_help=vocab_help)
             testset = SentenceDataset(opt.dataset_file['test'], tokenizer, opt=opt, vocab_help=vocab_help)
 
+        """
+            批训练，把数据分割成batch_size大小的数据块
+            DataLoader包装数据，每次抛出一个batch的数据进行训练
+        """
         self.train_dataloader = DataLoader(dataset=trainset, batch_size=opt.batch_size, shuffle=True)
         self.test_dataloader = DataLoader(dataset=testset, batch_size=opt.batch_size)
 
@@ -95,10 +100,11 @@ class Instructor:
             logger.info('cuda memory allocated: {}'.format(torch.cuda.memory_allocated(self.opt.device.index)))
         self._print_args()
 
+    # 将模型中的可训练和不可训练参数的总数输出，并输出超参
     def _print_args(self):
         n_trainable_params, n_nontrainable_params = 0, 0
         for p in self.model.parameters():
-            n_params = torch.prod(torch.tensor(p.shape))
+            n_params = torch.prod(torch.tensor(p.shape))  # 当前param中要训练的参数量
             if p.requires_grad:
                 n_trainable_params += n_params
             else:
@@ -111,6 +117,7 @@ class Instructor:
         for arg in vars(self.opt):
             logger.info('>>> {0}: {1}'.format(arg, getattr(self.opt, arg)))
 
+    # 将模型中可训练的参数进行初始化
     def _reset_params(self):
         for p in self.model.parameters():
             if p.requires_grad:
@@ -120,13 +127,14 @@ class Instructor:
                     stdv = 1. / (p.shape[0] ** 0.5)
                     torch.nn.init.uniform_(p, a=-stdv, b=stdv)
 
+    # 根据超参设置群参优化器，以及线性模型预热和衰减策略
     def get_bert_optimizer(self, model):
         # Prepare optimizer and schedule (linear warmup and decay)
         no_decay = ['bias', 'LayerNorm.weight']
         diff_part = ["bert.embeddings", "bert.encoder"]
 
         if self.opt.diff_lr:
-            logger.info("layered learning rate on")
+            logger.info("layered learning rate on")  # 开启分层的学习速率
             optimizer_grouped_parameters = [
                 {
                     "params": [p for n, p in model.named_parameters() if
@@ -156,12 +164,16 @@ class Instructor:
             optimizer = AdamW(optimizer_grouped_parameters, eps=self.opt.adam_epsilon)
 
         else:
-            logger.info("bert learning rate on")
+            logger.info("bert learning rate on")  # 开启bert lr
             optimizer_grouped_parameters = [
-                {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
-                 'weight_decay': self.opt.weight_decay},
-                {'params': [p for n, p in model.named_parameters() if any(
-                    nd in n for nd in no_decay)], 'weight_decay': 0.0}
+                {
+                    'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
+                    'weight_decay': self.opt.weight_decay
+                },
+                {
+                    'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)],
+                    'weight_decay': 0.0
+                }
             ]
             optimizer = AdamW(optimizer_grouped_parameters, lr=self.opt.bert_lr, eps=self.opt.adam_epsilon)
 
