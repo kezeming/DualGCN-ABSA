@@ -15,12 +15,13 @@ from tree import head_to_tree, tree_to_adj
 
 
 class DualGCNClassifier(nn.Module):
+    # embedding就是一个查找表
     def __init__(self, embedding_matrix, opt):
         super().__init__()
         in_dim = opt.hidden_dim
         self.opt = opt
         self.gcn_model = GCNAbsaModel(embedding_matrix=embedding_matrix, opt=opt)
-        # 设置网络的全连接输出层
+        # 分类器
         self.classifier = nn.Linear(in_dim * 2, opt.polarities_dim)
 
     def forward(self, inputs):
@@ -31,12 +32,14 @@ class DualGCNClassifier(nn.Module):
         adj_ag_T = adj_ag.transpose(1, 2)
         identity = torch.eye(adj_ag.size(1)).cuda()
         identity = identity.unsqueeze(0).expand(adj_ag.size(0), adj_ag.size(1), adj_ag.size(1))
+        # A*A^T
         ortho = adj_ag @ adj_ag_T
 
         for i in range(ortho.size(0)):
-            ortho[i] -= torch.diag(torch.diag(ortho[i]))
-            ortho[i] += torch.eye(ortho[i].size(0)).cuda()
+            ortho[i] -= torch.diag(torch.diag(ortho[i]))  # 每个ortho正交矩阵的对角线元素置0
+            ortho[i] += torch.eye(ortho[i].size(0)).cuda()  # 每个ortho正交矩阵的对角线元素加1
 
+        # 根据loss类型设置正则化项？
         penal = None
         if self.opt.losstype == 'doubleloss':
             penal1 = (torch.norm(ortho - identity) / adj_ag.size(0)).cuda()
@@ -60,7 +63,7 @@ class GCNAbsaModel(nn.Module):
         super().__init__()
         self.opt = opt
         self.embedding_matrix = embedding_matrix
-        # 构建三个查找表emb、pos_emb、post_emb，其中emb训练过程中不更新
+        # 构建三个查找表emb、pos_emb、post_emb，其中emb训练过程中不更新，emb里存储的是glove模型中的embedding
         self.emb = nn.Embedding.from_pretrained(torch.tensor(embedding_matrix, dtype=torch.float), freeze=True)
         self.pos_emb = nn.Embedding(opt.pos_size, opt.pos_dim, padding_idx=0) if opt.pos_dim > 0 else None  # POS emb
         self.post_emb = nn.Embedding(opt.post_size, opt.post_dim,
@@ -70,6 +73,7 @@ class GCNAbsaModel(nn.Module):
         self.gcn = GCN(opt, embeddings, opt.hidden_dim, opt.num_layers)
 
     def forward(self, inputs):
+        # token，aspect，pos，head，deprel，post，mask，length，adj
         tok, asp, pos, head, deprel, post, mask, l, adj = inputs  # unpack inputs
         maxlen = max(l.data)
         mask = mask[:, :maxlen]
@@ -77,7 +81,11 @@ class GCNAbsaModel(nn.Module):
             adj_dep = adj[:, :maxlen, :maxlen].float()
         else:
             def inputs_to_tree_reps(head, words, l):
+                # Convert a sequence of head indexes into a tree object.
                 trees = [head_to_tree(head[i], words[i], l[i]) for i in range(len(l))]
+                # Convert a tree object to an (numpy) adjacency matrix.
+                # directed参数：有向图 or 无向图
+                # self_loop参数：是否自我可达，即i到i是否有边
                 adj = [tree_to_adj(maxlen, tree, directed=self.opt.direct, self_loop=self.opt.loop).reshape(1, maxlen, maxlen) for tree in trees]
                 adj = np.concatenate(adj, axis=0)
                 adj = torch.from_numpy(adj)

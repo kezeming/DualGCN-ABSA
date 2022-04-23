@@ -61,7 +61,7 @@ class Instructor:
                 fnames=[opt.dataset_file['train'], opt.dataset_file['test']],
                 max_length=opt.max_length,
                 data_file='{}/{}_tokenizer.dat'.format(opt.vocab_dir, opt.dataset))
-            # 创建vocab词汇表对应的embedding矩阵
+            # 创建vocab词汇表对应的embedding查找表
             embedding_matrix = build_embedding_matrix(
                 vocab=tokenizer.vocab,
                 embed_dim=opt.embed_dim,
@@ -179,6 +179,7 @@ class Instructor:
 
         return optimizer
 
+    # train
     def _train(self, criterion, optimizer, max_test_acc_overall=0):
         max_test_acc = 0
         max_f1 = 0
@@ -194,6 +195,7 @@ class Instructor:
                 self.model.train()
                 optimizer.zero_grad()
                 inputs = [sample_batched[col].to(self.opt.device) for col in self.opt.inputs_cols]
+                # 输出，惩罚项
                 outputs, penal = self.model(inputs)
                 targets = sample_batched['polarity'].to(self.opt.device)
                 if self.opt.losstype is not None:
@@ -201,9 +203,12 @@ class Instructor:
                 else:
                     loss = criterion(outputs, targets)
 
+                # 梯度反向传播
                 loss.backward()
+                # 更新参数
                 optimizer.step()
 
+                # 每5个batch统计一下当前模型对测试集的准确率和f1分，把当前最好的模型参数保存
                 if global_step % self.opt.log_step == 0:
                     n_correct += (torch.argmax(outputs, -1) == targets).sum().item()
                     n_total += len(outputs)
@@ -237,6 +242,7 @@ class Instructor:
                 outputs, penal = self.model(inputs)
                 n_test_correct += (torch.argmax(outputs, -1) == targets).sum().item()
                 n_test_total += len(outputs)
+                # dim=0，将所有的targets和outputs按行来拼接到一起
                 targets_all = torch.cat((targets_all, targets), dim=0) if targets_all is not None else targets
                 outputs_all = torch.cat((outputs_all, outputs), dim=0) if outputs_all is not None else outputs
         test_acc = n_test_correct / n_test_total
@@ -244,8 +250,11 @@ class Instructor:
 
         labels = targets_all.data.cpu()
         predic = torch.argmax(outputs_all, -1).cpu()
+        # 显示结果，生成图放到论文中说服力更大！
         if show_results:
+            # 显示分类报告, 包括每个类的精确度，召回率，F1值等信息
             report = metrics.classification_report(labels, predic, digits=4)
+            # 混淆矩阵
             confusion = metrics.confusion_matrix(labels, predic)
             return report, confusion, test_acc, f1
 
@@ -261,7 +270,7 @@ class Instructor:
         logger.info(test_confusion)
 
     def run(self):
-        criterion = nn.CrossEntropyLoss()
+        criterion = nn.CrossEntropyLoss()  # 交叉熵损失函数，常见于分类问题
         if 'bert' not in self.opt.model_name:
             _params = filter(lambda p: p.requires_grad, self.model.parameters())
             optimizer = self.opt.optimizer(_params, lr=self.opt.learning_rate, weight_decay=self.opt.l2reg)

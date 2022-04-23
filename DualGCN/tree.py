@@ -51,6 +51,7 @@ class Tree(object):
 
 def head_to_tree(head, tokens, len_):
     """
+    将 head 的 index 序列转换为 tree object
     Convert a sequence of head indexes into a tree object.
     """
     if isinstance(head, list) == False:
@@ -78,6 +79,7 @@ def head_to_tree(head, tokens, len_):
 
 def tree_to_adj(sent_len, tree, directed=False, self_loop=True):
     """
+    把一个 tree Object 转换为numpy型的邻接矩阵
     Convert a tree object to an (numpy) adjacency matrix.
     """
     ret = np.zeros((sent_len, sent_len), dtype=np.float32)
