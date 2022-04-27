@@ -390,8 +390,7 @@ def main():
     parser.add_argument('--beta', default=0.25, type=float)
 
     # * bert
-    parser.add_argument('--pretrained_bert_name', default='/Users/cuixiyong/PycharmProjects/DualGCN-ABSA/BERT/bert'
-                                                          '-base-uncased', type=str)
+    parser.add_argument('--pretrained_bert_name', default='./BERT/bert-base-uncased', type=str)
     parser.add_argument("--adam_epsilon", default=1e-8, type=float, help="Epsilon for Adam optimizer.")
     parser.add_argument('--bert_dim', type=int, default=768)
     parser.add_argument('--bert_dropout', type=float, default=0.3, help='BERT dropout rate.')

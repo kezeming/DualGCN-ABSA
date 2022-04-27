@@ -30,6 +30,7 @@ class ParseHead(object):
 
         info = torch_load(config.model_path_base)
         assert 'hparams' in info['spec'], "Older savefiles not supported"
+        print("Loading model done!")
         self.parser = KM_parser.ChartParser.from_spec(info['spec'], info['state_dict'])
         self.parser.contributions = (config.contributions == 1)
 
