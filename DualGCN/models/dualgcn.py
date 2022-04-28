@@ -5,6 +5,7 @@ Author: chenhao
 Date: 2021-06-09 14:17:37
 '''
 import copy
+import logging
 import math
 import torch
 import numpy as np
@@ -154,7 +155,8 @@ class GCN(nn.Module):
     def encode_with_rnn(self, rnn_inputs, seq_lens, batch_size):
         h0, c0 = rnn_zero_state(batch_size, self.opt.rnn_hidden, self.opt.rnn_layers, self.opt.bidirect)
         # pack_padded_sequence将填充过的数据进行压缩，避免填充的值对最终训练产生影响
-        rnn_inputs = nn.utils.rnn.pack_padded_sequence(rnn_inputs, seq_lens, batch_first=True, enforce_sorted=False)
+        # seq_lens.cpu() 解决使用过高版本torch的报错
+        rnn_inputs = nn.utils.rnn.pack_padded_sequence(rnn_inputs, seq_lens.cpu(), batch_first=True, enforce_sorted=False)
         rnn_outputs, (ht, ct) = self.rnn(rnn_inputs, (h0, c0))
         rnn_outputs, _ = nn.utils.rnn.pad_packed_sequence(rnn_outputs, batch_first=True)
         return rnn_outputs
@@ -180,7 +182,9 @@ class GCN(nn.Module):
         gcn_inputs = self.rnn_drop(self.encode_with_rnn(embs, l, tok.size()[0]))
 
         denom_dep = adj.sum(2).unsqueeze(2) + 1
+        # attn_tensor=[batch_size, heads, seq_len, seq_len]
         attn_tensor = self.attn(gcn_inputs, gcn_inputs, src_mask)
+        # attn_adj_list=[heads, batch_size, seq_len, seq_len]
         attn_adj_list = [attn_adj.squeeze(1) for attn_adj in torch.split(attn_tensor, 1, dim=1)]
         outputs_dep = None
         adj_ag = None
@@ -191,7 +195,7 @@ class GCN(nn.Module):
                 adj_ag = attn_adj_list[i]
             else:
                 adj_ag += attn_adj_list[i]
-        adj_ag /= self.attention_heads
+        adj_ag = adj_ag / self.attention_heads  # bug fix！
 
         for j in range(adj_ag.size(0)):
             adj_ag[j] -= torch.diag(torch.diag(adj_ag[j]))

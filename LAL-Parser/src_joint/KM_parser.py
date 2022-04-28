@@ -1411,6 +1411,8 @@ class ChartParser(nn.Module):
     def from_spec(cls, spec, model):
         spec = spec.copy()
         hparams = spec['hparams']
+        # 预先下载xlnet模型到本地，然后从本地加载
+        hparams['xlnet_model'] = "./pre-trained-model/xlnet-large-cased"
         if 'sentence_max_len' not in hparams:
             hparams['sentence_max_len'] = 300
         if 'use_elmo' not in hparams:

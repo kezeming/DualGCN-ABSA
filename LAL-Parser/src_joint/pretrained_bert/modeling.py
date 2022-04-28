@@ -45,7 +45,7 @@ PRETRAINED_MODEL_ARCHIVE_MAP = {
     'bert-base-multilingual-cased': "https://s3.amazonaws.com/models.huggingface.co/bert/bert-base-multilingual-cased.tar.gz",
     'bert-base-chinese': "https://s3.amazonaws.com/models.huggingface.co/bert/bert-base-chinese.tar.gz",
 }
-CONFIG_NAME = 'bert_config.json'
+CONFIG_NAME = 'config.json'
 WEIGHTS_NAME = 'pytorch_model.bin'
 
 def gelu(x):
@@ -459,7 +459,7 @@ class PreTrainedBertModel(nn.Module):
                     . `bert-base-multilingual`
                     . `bert-base-chinese`
                 - a path or url to a pretrained model archive containing:
-                    . `bert_config.json` a configuration file for the model
+                    . `config.json` a configuration file for the model
                     . `pytorch_model.bin` a PyTorch dump of a BertForPreTraining instance
             cache_dir: an optional path to a folder in which the pre-trained models will be cached.
             state_dict: an optional state dictionnary (collections.OrderedDict object) to use instead of Google pre-trained models
