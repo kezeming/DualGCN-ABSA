@@ -1,3 +1,4 @@
+import logging
 import uuid
 import torch
 import numpy as np
@@ -30,7 +31,7 @@ class ParseHead(object):
 
         info = torch_load(config.model_path_base)
         assert 'hparams' in info['spec'], "Older savefiles not supported"
-        print("LAL-Parse Parameters:", info['spec'])  # 打印LAL-Parse解析树的参数
+        # logging.Logger.info("LAL-Parse Parameters: {}".format(info['sepc']))  # 打印LAL-Parse解析树的参数
         print("Loading model done!")
         self.parser = KM_parser.ChartParser.from_spec(info['spec'], info['state_dict'])
         self.parser.contributions = (config.contributions == 1)

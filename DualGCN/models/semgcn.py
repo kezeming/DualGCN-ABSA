@@ -126,7 +126,7 @@ class GCN(nn.Module):
                 adj_ag = attn_adj_list[i]
             else:
                 adj_ag += attn_adj_list[i]
-        adj_ag /= self.attention_heads
+        adj_ag = adj_ag / self.attention_heads  # bug fix
 
         for j in range(adj_ag.size(0)):
             adj_ag[j] -= torch.diag(torch.diag(adj_ag[j]))
