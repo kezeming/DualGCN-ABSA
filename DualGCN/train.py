@@ -189,11 +189,15 @@ class Instructor:
             logger.info('>' * 60)
             logger.info('epoch: {}'.format(epoch))
             n_correct, n_total = 0, 0
+            # sample_batched=[batch_size, data]
             for i_batch, sample_batched in enumerate(self.train_dataloader):
                 global_step += 1
                 # switch model to training mode, clear gradient accumulators
                 self.model.train()
                 optimizer.zero_grad()
+                # 非bert模型的 input=[text, aspect, post, pos, deprel, head, adj, mask, length, polarity]
+                # bert模型的 input=[text_bert_indices, bert_segments_ids, attention_mask, asp_start, asp_end,
+                #                         adj_matrix, src_mask, aspect_mask]
                 inputs = [sample_batched[col].to(self.opt.device) for col in self.opt.inputs_cols]
                 # 输出，惩罚项
                 outputs, penal = self.model(inputs)

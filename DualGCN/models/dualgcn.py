@@ -153,6 +153,7 @@ class GCN(nn.Module):
         self.affine2 = nn.Parameter(torch.Tensor(self.mem_dim, self.mem_dim))
 
     def encode_with_rnn(self, rnn_inputs, seq_lens, batch_size):
+        # h0, c0=[total_layers, batch_size, hidden_dim]
         h0, c0 = rnn_zero_state(batch_size, self.opt.rnn_hidden, self.opt.rnn_layers, self.opt.bidirect)
         # pack_padded_sequence将填充过的数据进行压缩，避免填充的值对最终训练产生影响
         # seq_lens.cpu() 解决使用过高版本torch的报错
@@ -163,6 +164,7 @@ class GCN(nn.Module):
 
     def forward(self, adj, inputs):
         tok, asp, pos, head, deprel, post, mask, l, _ = inputs  # unpack inputs
+        # tok=[batch_size, max_len] => [batch_size, 1, max_len]
         src_mask = (tok != 0).unsqueeze(-2)
         maxlen = max(l.data)
         mask_ = (torch.zeros_like(tok) != tok).float().unsqueeze(-1)[:, :maxlen]
@@ -208,12 +210,14 @@ class GCN(nn.Module):
 
         for l in range(self.layers):
             # ************SynGCN*************
+            #             基于语法
             Ax_dep = adj.bmm(outputs_dep)
             AxW_dep = self.W[l](Ax_dep)
             AxW_dep = AxW_dep / denom_dep
             gAxW_dep = F.relu(AxW_dep)
 
             # ************SemGCN*************
+            #             基于语义
             Ax_ag = adj_ag.bmm(outputs_ag)
             AxW_ag = self.weight_list[l](Ax_ag)
             AxW_ag = AxW_ag / denom_ag
@@ -229,7 +233,8 @@ class GCN(nn.Module):
         return outputs_ag, outputs_dep, adj_ag
 
 
-# 根据我们指定的[batch_size, hidden_dim, num_layers, bi-rnn], 生成一个双向rnn的初始h0和c0，并且把他们移到gpu中计算
+# 根据我们指定的[batch_size, hidden_dim, num_layers, bi-rnn]
+# 根据rnn的层数以及是否双向生成rnn的初始的h0和c0，并且把他们移到gpu中计算
 def rnn_zero_state(batch_size, hidden_dim, num_layers, bidirectional=True):
     total_layers = num_layers * 2 if bidirectional else num_layers
     state_shape = (total_layers, batch_size, hidden_dim)
