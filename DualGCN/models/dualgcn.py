@@ -128,8 +128,8 @@ class GCN(nn.Module):
             self.in_dim = opt.rnn_hidden
 
         # 设置 drop out
-        self.rnn_drop = nn.Dropout(opt.rnn_dropout)
         self.in_drop = nn.Dropout(opt.input_dropout)
+        self.rnn_drop = nn.Dropout(opt.rnn_dropout)
         self.gcn_drop = nn.Dropout(opt.gcn_dropout)
 
         # gcn layer
@@ -157,34 +157,45 @@ class GCN(nn.Module):
         h0, c0 = rnn_zero_state(batch_size, self.opt.rnn_hidden, self.opt.rnn_layers, self.opt.bidirect)
         # pack_padded_sequence将填充过的数据进行压缩，避免填充的值对最终训练产生影响
         # seq_lens.cpu() 解决使用过高版本torch的报错
-        rnn_inputs = nn.utils.rnn.pack_padded_sequence(rnn_inputs, seq_lens.cpu(), batch_first=True, enforce_sorted=False)
+        rnn_inputs = nn.utils.rnn.pack_padded_sequence(rnn_inputs, seq_lens.cpu(), batch_first=True,
+                                                       enforce_sorted=False)
+        # rnn_outputs=[batch_size, seq_len, num_directions * hidden_size]
         rnn_outputs, (ht, ct) = self.rnn(rnn_inputs, (h0, c0))
         rnn_outputs, _ = nn.utils.rnn.pad_packed_sequence(rnn_outputs, batch_first=True)
         return rnn_outputs
 
     def forward(self, adj, inputs):
         tok, asp, pos, head, deprel, post, mask, l, _ = inputs  # unpack inputs
-        # tok=[batch_size, max_len] => [batch_size, 1, max_len]
+        # [batch_size, seq_len] => [batch_size, 1, seq_len]
         src_mask = (tok != 0).unsqueeze(-2)
         maxlen = max(l.data)
+        # *_like(W) 函数构建一个与W维度一致的矩阵，如zero_like、ones_like
+        # [batch_size, seq_len] => [batch_size, seq_len, 1] => [batch_size, seq_len, 1]
         mask_ = (torch.zeros_like(tok) != tok).float().unsqueeze(-1)[:, :maxlen]
 
         # embedding
+        # [batch_size, max_len] => [batch_size, max_len, emb_dim]
         word_embs = self.emb(tok)
         embs = [word_embs]
         if self.opt.pos_dim > 0:
             embs += [self.pos_emb(pos)]
         if self.opt.post_dim > 0:
             embs += [self.post_emb(post)]
+        # embs = [batch_size, max_len, emb_dim] + [batch_size, max_len, pos_dim] + [batch_size, max_len, post_dim]
+        # => [batch_size, max_len, emb_dim + pos_dim + post_dim]
         embs = torch.cat(embs, dim=2)
+        # 设置embs的dropout
         embs = self.in_drop(embs)
 
         # rnn layer
-        self.rnn.flatten_parameters()
+        self.rnn.flatten_parameters()  # 重置参数数据指针，使用更快的代码路径
+        # gcn_inputs=[batch_size, seq_len, num_directions * hidden_size]
         gcn_inputs = self.rnn_drop(self.encode_with_rnn(embs, l, tok.size()[0]))
 
+        # adj=[batch_size, max_len, max_len] => [batch_size, max_len] => [batch_size, max_len, 1]
+        # sum(2)是将adj的每一行进行相加：ai1+ai2+...+aiN = sum;
         denom_dep = adj.sum(2).unsqueeze(2) + 1
-        # attn_tensor=[batch_size, heads, seq_len, seq_len]
+        # [batch_size, heads, seq_len, seq_len], attn_tensor是注意力权重
         attn_tensor = self.attn(gcn_inputs, gcn_inputs, src_mask)
         # attn_adj_list=[heads, batch_size, seq_len, seq_len]
         attn_adj_list = [attn_adj.squeeze(1) for attn_adj in torch.split(attn_tensor, 1, dim=1)]
@@ -192,34 +203,39 @@ class GCN(nn.Module):
         adj_ag = None
 
         # * Average Multi-head Attention matrixes
+        # * 将多头注意力矩阵相加，然后做平均
         for i in range(self.attention_heads):
             if adj_ag is None:
                 adj_ag = attn_adj_list[i]
             else:
-                adj_ag += attn_adj_list[i]
+                adj_ag += attn_adj_list[i]  # 矩阵对应位置值直接相加
+        # adj_ag=[batch_size, seq_len, seq_len]
         adj_ag = adj_ag / self.attention_heads  # bug fix！
 
         for j in range(adj_ag.size(0)):
-            adj_ag[j] -= torch.diag(torch.diag(adj_ag[j]))
-            adj_ag[j] += torch.eye(adj_ag[j].size(0)).cuda()
-        adj_ag = mask_ * adj_ag
+            adj_ag[j] -= torch.diag(torch.diag(adj_ag[j]))  # 对角线上的值置为0
+            adj_ag[j] += torch.eye(adj_ag[j].size(0)).cuda()  # 将对角线上值置为1
+        adj_ag = mask_ * adj_ag  # notice
 
+        # adj=[batch_size, seq_len, seq_len] => [batch_size, seq_len] => [batch_size, seq_len, 1]
         denom_ag = adj_ag.sum(2).unsqueeze(2) + 1
         outputs_ag = gcn_inputs
         outputs_dep = gcn_inputs
 
-        for l in range(self.layers):
+        for layer in range(self.layers):
             # ************SynGCN*************
-            #             基于语法
+            #             基于语法 --dep
+            # adj=[batch_size, max_len, max_len]
+            # outputs_dep=[batch_size, seq_len, num_directions * hidden_size]
             Ax_dep = adj.bmm(outputs_dep)
-            AxW_dep = self.W[l](Ax_dep)
+            AxW_dep = self.W[layer](Ax_dep)
             AxW_dep = AxW_dep / denom_dep
             gAxW_dep = F.relu(AxW_dep)
 
             # ************SemGCN*************
-            #             基于语义
+            #             基于语义 --ag
             Ax_ag = adj_ag.bmm(outputs_ag)
-            AxW_ag = self.weight_list[l](Ax_ag)
+            AxW_ag = self.weight_list[layer](Ax_ag)
             AxW_ag = AxW_ag / denom_ag
             gAxW_ag = F.relu(AxW_ag)
 
@@ -227,8 +243,8 @@ class GCN(nn.Module):
             A1 = F.softmax(torch.bmm(torch.matmul(gAxW_dep, self.affine1), torch.transpose(gAxW_ag, 1, 2)), dim=-1)
             A2 = F.softmax(torch.bmm(torch.matmul(gAxW_ag, self.affine2), torch.transpose(gAxW_dep, 1, 2)), dim=-1)
             gAxW_dep, gAxW_ag = torch.bmm(A1, gAxW_ag), torch.bmm(A2, gAxW_dep)
-            outputs_dep = self.gcn_drop(gAxW_dep) if l < self.layers - 1 else gAxW_dep
-            outputs_ag = self.gcn_drop(gAxW_ag) if l < self.layers - 1 else gAxW_ag
+            outputs_dep = self.gcn_drop(gAxW_dep) if layer < self.layers - 1 else gAxW_dep
+            outputs_ag = self.gcn_drop(gAxW_ag) if layer < self.layers - 1 else gAxW_ag
 
         return outputs_ag, outputs_dep, adj_ag
 

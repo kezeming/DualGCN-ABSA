@@ -191,6 +191,8 @@ class Instructor:
             n_correct, n_total = 0, 0
             # sample_batched=[batch_size, data]
             for i_batch, sample_batched in enumerate(self.train_dataloader):
+                logger.info('柯泽明1={}'.format(len(sample_batched)))
+                logger.info('柯泽明2={}'.format(sample_batched['text'].shape))
                 global_step += 1
                 # switch model to training mode, clear gradient accumulators
                 self.model.train()
