@@ -194,59 +194,59 @@ class GCN(nn.Module):
 
         # adj=[batch_size, max_len, max_len] => [batch_size, max_len] => [batch_size, max_len, 1]
         # sum(2)是将adj的每一行进行相加：ai1+ai2+...+aiN = sum;
-        denom_dep = adj.sum(2).unsqueeze(2) + 1
+        denom_syn = adj.sum(2).unsqueeze(2) + 1
         # [batch_size, heads, seq_len, seq_len], attn_tensor是注意力权重
         attn_tensor = self.attn(gcn_inputs, gcn_inputs, src_mask)
         # attn_adj_list=[heads, batch_size, seq_len, seq_len]
         attn_adj_list = [attn_adj.squeeze(1) for attn_adj in torch.split(attn_tensor, 1, dim=1)]
-        outputs_dep = None
-        adj_ag = None
+        outputs_syn = None
+        adj_sem = None
 
         # * Average Multi-head Attention matrixes
         # * 将多头注意力矩阵相加，然后做平均
         for i in range(self.attention_heads):
-            if adj_ag is None:
-                adj_ag = attn_adj_list[i]
+            if adj_sem is None:
+                adj_sem = attn_adj_list[i]
             else:
-                adj_ag += attn_adj_list[i]  # 矩阵对应位置值直接相加
-        # adj_ag=[batch_size, seq_len, seq_len]
-        adj_ag = adj_ag / self.attention_heads  # bug fix！
+                adj_sem += attn_adj_list[i]  # 矩阵对应位置值直接相加
+        # adj_sem=[batch_size, seq_len, seq_len]
+        adj_sem = adj_sem / self.attention_heads  # bug fix！
 
-        for j in range(adj_ag.size(0)):
-            adj_ag[j] -= torch.diag(torch.diag(adj_ag[j]))  # 对角线上的值置为0
-            adj_ag[j] += torch.eye(adj_ag[j].size(0)).cuda()  # 将对角线上值置为1
-        adj_ag = mask_ * adj_ag  # notice
+        for j in range(adj_sem.size(0)):
+            adj_sem[j] -= torch.diag(torch.diag(adj_sem[j]))  # 对角线上的值置为0
+            adj_sem[j] += torch.eye(adj_sem[j].size(0)).cuda()  # 将对角线上值置为1
+        adj_sem = mask_ * adj_sem  # notice
 
         # adj=[batch_size, seq_len, seq_len] => [batch_size, seq_len] => [batch_size, seq_len, 1]
-        denom_ag = adj_ag.sum(2).unsqueeze(2) + 1
-        outputs_ag = gcn_inputs
-        outputs_dep = gcn_inputs
+        denom_sem = adj_sem.sum(2).unsqueeze(2) + 1
+        outputs_sem = gcn_inputs
+        outputs_syn = gcn_inputs
 
         for layer in range(self.layers):
             # ************SynGCN*************
             #             基于语法 --dep
             # adj=[batch_size, max_len, max_len]
             # outputs_dep=[batch_size, seq_len, num_directions * hidden_size]
-            Ax_dep = adj.bmm(outputs_dep)
-            AxW_dep = self.W[layer](Ax_dep)
-            AxW_dep = AxW_dep / denom_dep
-            gAxW_dep = F.relu(AxW_dep)
+            Ax_syn = adj.bmm(outputs_syn)
+            AxW_syn = self.W[layer](Ax_syn)
+            AxW_syn = AxW_syn / denom_syn
+            gAxW_syn = F.relu(AxW_syn)
 
             # ************SemGCN*************
             #             基于语义 --ag
-            Ax_ag = adj_ag.bmm(outputs_ag)
-            AxW_ag = self.weight_list[layer](Ax_ag)
-            AxW_ag = AxW_ag / denom_ag
-            gAxW_ag = F.relu(AxW_ag)
+            Ax_sem = adj_sem.bmm(outputs_sem)
+            AxW_sem = self.weight_list[layer](Ax_sem)
+            AxW_sem = AxW_sem / denom_sem
+            gAxW_sem = F.relu(AxW_sem)
 
             # * mutual Biaffine module
-            A1 = F.softmax(torch.bmm(torch.matmul(gAxW_dep, self.affine1), torch.transpose(gAxW_ag, 1, 2)), dim=-1)
-            A2 = F.softmax(torch.bmm(torch.matmul(gAxW_ag, self.affine2), torch.transpose(gAxW_dep, 1, 2)), dim=-1)
-            gAxW_dep, gAxW_ag = torch.bmm(A1, gAxW_ag), torch.bmm(A2, gAxW_dep)
-            outputs_dep = self.gcn_drop(gAxW_dep) if layer < self.layers - 1 else gAxW_dep
-            outputs_ag = self.gcn_drop(gAxW_ag) if layer < self.layers - 1 else gAxW_ag
+            A1 = F.softmax(torch.bmm(torch.matmul(gAxW_syn, self.affine1), torch.transpose(gAxW_sem, 1, 2)), dim=-1)
+            A2 = F.softmax(torch.bmm(torch.matmul(gAxW_sem, self.affine2), torch.transpose(gAxW_syn, 1, 2)), dim=-1)
+            gAxW_syn, gAxW_sem = torch.bmm(A1, gAxW_sem), torch.bmm(A2, gAxW_syn)
+            outputs_syn = self.gcn_drop(gAxW_syn) if layer < self.layers - 1 else gAxW_syn
+            outputs_sem = self.gcn_drop(gAxW_sem) if layer < self.layers - 1 else gAxW_sem
 
-        return outputs_ag, outputs_dep, adj_ag
+        return outputs_sem, outputs_syn, adj_sem
 
 
 # 根据我们指定的[batch_size, hidden_dim, num_layers, bi-rnn]
