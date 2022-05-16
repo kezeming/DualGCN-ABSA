@@ -155,10 +155,10 @@ class Tokenizer(object):
             trunc = sequence[:maxlen]
         trunc = np.asarray(trunc, dtype=dtype)
         if padding == 'post':
-            # 将x的前trunc部分替换为idx，后半部分为pad_id
+            # 将x的前maxlen部分替换为trunc，后半部分为pad_id
             x[:len(trunc)] = trunc 
         else:
-            # 将x的后trunc部分替换为idx，前半部分为pad_id
+            # 将x的后maxlen部分替换为trunc，前半部分为pad_id
             x[-len(trunc):] = trunc
         return x
     

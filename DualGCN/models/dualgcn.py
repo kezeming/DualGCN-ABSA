@@ -165,12 +165,14 @@ class GCN(nn.Module):
         return rnn_outputs
 
     def forward(self, adj, inputs):
+        # *inputs中的所有数据的第二维都是 opt.max_len
         tok, asp, pos, head, deprel, post, mask, l, _ = inputs  # unpack inputs
-        # [batch_size, seq_len] => [batch_size, 1, seq_len]
+        # [batch_size, max_len] => [batch_size, 1, max_len]
         src_mask = (tok != 0).unsqueeze(-2)
-        maxlen = max(l.data)
+        maxlen = max(l.data)  # 此maxlen表示：在一个batch中，每条数据的实际token长度的最大值
         # *_like(W) 函数构建一个与W维度一致的矩阵，如zero_like、ones_like
-        # [batch_size, seq_len] => [batch_size, seq_len, 1] => [batch_size, seq_len, 1]
+        # [batch_size, max_len] => [batch_size, max_len, 1] => [batch_size, :maxlen, 1]
+        # max_len=85代表sequence的最大长度, 而maxlen则是我们当前batch中实际token序列的最大长度
         mask_ = (torch.zeros_like(tok) != tok).float().unsqueeze(-1)[:, :maxlen]
 
         # embedding
@@ -190,14 +192,17 @@ class GCN(nn.Module):
         # rnn layer
         self.rnn.flatten_parameters()  # 重置参数数据指针，使用更快的代码路径
         # gcn_inputs=[batch_size, seq_len, num_directions * hidden_size]
+        # 注意: 这里的 seq_len 其实就等于 maxlen
         gcn_inputs = self.rnn_drop(self.encode_with_rnn(embs, l, tok.size()[0]))
 
-        # adj=[batch_size, max_len, max_len] => [batch_size, max_len] => [batch_size, max_len, 1]
+        # adj已经在上层GCNAbsaModel中处理为长度为maxlen(有parseadj=True时)
+        # adj=[batch_size, maxlen, maxlen] => [batch_size, maxlen] => [batch_size, maxlen, 1]
         # sum(2)是将adj的每一行进行相加：ai1+ai2+...+aiN = sum;
         denom_syn = adj.sum(2).unsqueeze(2) + 1
         # [batch_size, heads, seq_len, seq_len], attn_tensor是注意力权重
         attn_tensor = self.attn(gcn_inputs, gcn_inputs, src_mask)
-        # attn_adj_list=[heads, batch_size, seq_len, seq_len]
+        # attn = [batch_size, heads, seq_len, seq_len]
+        # =>[heads, batch_size, seq_len, seq_len]
         attn_adj_list = [attn_adj.squeeze(1) for attn_adj in torch.split(attn_tensor, 1, dim=1)]
         outputs_syn = None
         adj_sem = None
@@ -215,9 +220,11 @@ class GCN(nn.Module):
         for j in range(adj_sem.size(0)):
             adj_sem[j] -= torch.diag(torch.diag(adj_sem[j]))  # 对角线上的值置为0
             adj_sem[j] += torch.eye(adj_sem[j].size(0)).cuda()  # 将对角线上值置为1
-        adj_sem = mask_ * adj_sem  # notice
+        # [batch_size, maxlen, 1] * [batch_size, seq_len, seq_len]  seq_len 其实就等于 maxlen
+        # => [batch_size, seq_len, seq_len]
+        adj_sem = mask_ * adj_sem
 
-        # adj=[batch_size, seq_len, seq_len] => [batch_size, seq_len] => [batch_size, seq_len, 1]
+        # [batch_size, seq_len, seq_len] => [batch_size, seq_len] => [batch_size, seq_len, 1]
         denom_sem = adj_sem.sum(2).unsqueeze(2) + 1
         outputs_sem = gcn_inputs
         outputs_syn = gcn_inputs
@@ -225,26 +232,30 @@ class GCN(nn.Module):
         for layer in range(self.layers):
             # ************SynGCN*************
             #             基于语法 --dep
-            # adj=[batch_size, max_len, max_len]
-            # outputs_dep=[batch_size, seq_len, num_directions * hidden_size]
-            Ax_syn = adj.bmm(outputs_syn)
+            # adj=[batch_size, maxlen, maxlen]
+            # outputs_syn=[batch_size, seq_len, num_directions * hidden_size]
+            Ax_syn = adj.bmm(outputs_syn)  # [batch_size, seq_len, num_directions*hidden_size]
             AxW_syn = self.W[layer](Ax_syn)
             AxW_syn = AxW_syn / denom_syn
-            gAxW_syn = F.relu(AxW_syn)
+            H_syn = F.relu(AxW_syn)
 
             # ************SemGCN*************
             #             基于语义 --ag
+            # adj_sem=[batch_size, seq_len, seq_len]
+            # outputs_sem=[batch_size, seq_len, num_directions * hidden_size]
             Ax_sem = adj_sem.bmm(outputs_sem)
             AxW_sem = self.weight_list[layer](Ax_sem)
             AxW_sem = AxW_sem / denom_sem
-            gAxW_sem = F.relu(AxW_sem)
+            H_sem = F.relu(AxW_sem)
 
             # * mutual Biaffine module
-            A1 = F.softmax(torch.bmm(torch.matmul(gAxW_syn, self.affine1), torch.transpose(gAxW_sem, 1, 2)), dim=-1)
-            A2 = F.softmax(torch.bmm(torch.matmul(gAxW_sem, self.affine2), torch.transpose(gAxW_syn, 1, 2)), dim=-1)
-            gAxW_syn, gAxW_sem = torch.bmm(A1, gAxW_sem), torch.bmm(A2, gAxW_syn)
-            outputs_syn = self.gcn_drop(gAxW_syn) if layer < self.layers - 1 else gAxW_syn
-            outputs_sem = self.gcn_drop(gAxW_sem) if layer < self.layers - 1 else gAxW_sem
+            A1 = F.softmax(torch.bmm(torch.matmul(H_syn, self.affine1), torch.transpose(H_sem, 1, 2)), dim=-1)
+            A2 = F.softmax(torch.bmm(torch.matmul(H_sem, self.affine2), torch.transpose(H_syn, 1, 2)), dim=-1)
+            # H_syn_prime=H_syn'
+            # H_sem_prime=H_sem'
+            H_syn_prime, H_sem_prime = torch.bmm(A1, H_sem), torch.bmm(A2, H_syn)
+            outputs_syn = self.gcn_drop(H_syn_prime) if layer < self.layers - 1 else H_syn_prime
+            outputs_sem = self.gcn_drop(H_sem_prime) if layer < self.layers - 1 else H_sem_prime
 
         return outputs_sem, outputs_syn, adj_sem
 
@@ -299,7 +310,7 @@ class MultiHeadAttention(nn.Module):
         mask = mask[:, :, :query.size(1)]
         if mask is not None:
             # Same mask applied to all h heads.
-            mask = mask.unsqueeze(1)  # 在第二维增加一个维度，比如[3, 2] => [3, 1, 2]
+            mask = mask.unsqueeze(1)  # [batch_size, 1, seq_len] => [batch_size, 1, 1, max_len]
 
         batch_size = query.size(0)  # query[batch_size, seq_len, d_model]
 

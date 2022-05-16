@@ -191,8 +191,8 @@ class Instructor:
             n_correct, n_total = 0, 0
             # sample_batched=[batch_size, data]
             for i_batch, sample_batched in enumerate(self.train_dataloader):
-                logger.info('柯泽明1={}'.format(len(sample_batched)))
-                logger.info('柯泽明2={}'.format(sample_batched['text'].shape))
+                # logger.info('柯泽明1={}'.format(len(sample_batched)))=10, 表示的是有10种col属性值
+                # logger.info('柯泽明2={}'.format(sample_batched['text'].shape))=[16,85] 每种col的维度
                 global_step += 1
                 # switch model to training mode, clear gradient accumulators
                 self.model.train()
@@ -200,6 +200,8 @@ class Instructor:
                 # 非bert模型的 input=[text, aspect, post, pos, deprel, head, adj, mask, length, polarity]
                 # bert模型的 input=[text_bert_indices, bert_segments_ids, attention_mask, asp_start, asp_end,
                 #                         adj_matrix, src_mask, aspect_mask]
+                # for col in self.opt.inputs_cols:
+                #     logger.info('inputs={}的shape[{}]'.format(col, sample_batched[col].shape))
                 inputs = [sample_batched[col].to(self.opt.device) for col in self.opt.inputs_cols]
                 # 输出，惩罚项
                 outputs, penal = self.model(inputs)

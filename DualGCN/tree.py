@@ -7,8 +7,10 @@ from collections import defaultdict
 
 import copy
 
+
 class Tree(object):
     """
+    从standfordnlp /treelstm中重用树对象。
     Reused tree object from stanfordnlp/treelstm.
     """
     def __init__(self):
@@ -49,12 +51,13 @@ class Tree(object):
             for x in c:
                 yield x
 
+
 def head_to_tree(head, tokens, len_):
     """
     将 head 的 index 序列转换为 tree object
     Convert a sequence of head indexes into a tree object.
     """
-    if isinstance(head, list) == False:
+    if not isinstance(head, list):
         tokens = tokens[:len_].tolist()
         head = head[:len_].tolist()
     root = None
@@ -64,7 +67,7 @@ def head_to_tree(head, tokens, len_):
     for i in range(len(nodes)):
         h = head[i]
         nodes[i].idx = i
-        nodes[i].dist = -1 # just a filler
+        nodes[i].dist = -1  # just a filler
         if h == 0:
             root = nodes[i]
         else:
@@ -76,6 +79,7 @@ def head_to_tree(head, tokens, len_):
 
     assert root is not None
     return root
+
 
 def tree_to_adj(sent_len, tree, directed=False, self_loop=True):
     """
