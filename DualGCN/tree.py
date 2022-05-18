@@ -24,7 +24,7 @@ class Tree(object):
         self.children.append(child)
 
     def size(self):
-        if getattr(self,'_size'):
+        if getattr(self, '_size'):
             return self._size
         count = 1
         for i in xrange(self.num_children):
@@ -33,7 +33,7 @@ class Tree(object):
         return self._size
 
     def depth(self):
-        if getattr(self,'_depth'):
+        if getattr(self, '_depth'):
             return self._depth
         count = 0
         if self.num_children>0:

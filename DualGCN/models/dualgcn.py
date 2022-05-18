@@ -26,33 +26,36 @@ class DualGCNClassifier(nn.Module):
         self.classifier = nn.Linear(in_dim * 2, opt.polarities_dim)
 
     def forward(self, inputs):
-        outputs1, outputs2, adj_ag, adj_dep = self.gcn_model(inputs)
-        final_outputs = torch.cat((outputs1, outputs2), dim=-1)
+        outputs1, outputs2, adj_sem, adj_syn = self.gcn_model(inputs)
+        final_outputs = torch.cat((outputs1, outputs2), dim=-1)  # [batch_size, 1, 2*mem_dim]
         logits = self.classifier(final_outputs)
 
-        adj_ag_T = adj_ag.transpose(1, 2)
-        identity = torch.eye(adj_ag.size(1)).cuda()
-        identity = identity.unsqueeze(0).expand(adj_ag.size(0), adj_ag.size(1), adj_ag.size(1))
+        adj_sem_T = adj_sem.transpose(1, 2)
+        identity = torch.eye(adj_sem.size(1)).cuda()
+        # [batch_size, seq_len, seq_len]
+        identity = identity.unsqueeze(0).expand(adj_sem.size(0), adj_sem.size(1), adj_sem.size(1))
         # A*A^T
-        ortho = adj_ag @ adj_ag_T
+        ortho = adj_sem @ adj_sem_T
 
         for i in range(ortho.size(0)):
             ortho[i] -= torch.diag(torch.diag(ortho[i]))  # 每个ortho正交矩阵的对角线元素置0
-            ortho[i] += torch.eye(ortho[i].size(0)).cuda()  # 每个ortho正交矩阵的对角线元素加1
+            ortho[i] += torch.eye(ortho[i].size(0)).cuda()  # 每个ortho正交矩阵的对角线元素置1
 
-        # 根据loss类型设置正则化项？
+        # 根据loss类型设置正则化项
+        # penal1 = R_O
+        # penal2 = R_D
         penal = None
         if self.opt.losstype == 'doubleloss':
-            penal1 = (torch.norm(ortho - identity) / adj_ag.size(0)).cuda()
-            penal2 = (adj_ag.size(0) / torch.norm(adj_ag - adj_dep)).cuda()
+            penal1 = (torch.norm(ortho - identity) / adj_sem.size(0)).cuda()
+            penal2 = (adj_sem.size(0) / torch.norm(adj_sem - adj_syn)).cuda()
             penal = self.opt.alpha * penal1 + self.opt.beta * penal2
 
         elif self.opt.losstype == 'orthogonalloss':
-            penal = (torch.norm(ortho - identity) / adj_ag.size(0)).cuda()
+            penal = (torch.norm(ortho - identity) / adj_sem.size(0)).cuda()
             penal = self.opt.alpha * penal
 
         elif self.opt.losstype == 'differentiatedloss':
-            penal = (adj_ag.size(0) / torch.norm(adj_ag - adj_dep)).cuda()
+            penal = (adj_sem.size(0) / torch.norm(adj_sem - adj_syn)).cuda()
             penal = self.opt.beta * penal
 
         return logits, penal
@@ -79,8 +82,9 @@ class GCNAbsaModel(nn.Module):
         maxlen = max(l.data)
         mask = mask[:, :maxlen]
         if self.opt.parseadj:
-            adj_dep = adj[:, :maxlen, :maxlen].float()
+            adj_syn = adj[:, :maxlen, :maxlen].float()
         else:
+            # 将输入序列中的head转换为tree，再转换为adj
             def inputs_to_tree_reps(head, words, l):
                 # Convert a sequence of head indexes into a tree object.
                 trees = [head_to_tree(head[i], words[i], l[i]) for i in range(len(l))]
@@ -88,20 +92,27 @@ class GCNAbsaModel(nn.Module):
                 # directed参数：有向图 or 无向图
                 # self_loop参数：是否自我可达，即i到i是否有边
                 adj = [tree_to_adj(maxlen, tree, directed=self.opt.direct, self_loop=self.opt.loop).reshape(1, maxlen, maxlen) for tree in trees]
+                # [batch_size, maxlen, maxlen]
                 adj = np.concatenate(adj, axis=0)
                 adj = torch.from_numpy(adj)
                 return adj.cuda()
 
-            adj_dep = inputs_to_tree_reps(head.data, tok.data, l.data)
+            adj_syn = inputs_to_tree_reps(head.data, tok.data, l.data)
 
-        h1, h2, adj_ag = self.gcn(adj_dep, inputs)
+        h1, h2, adj_sem = self.gcn(adj_syn, inputs)
         # avg pooling asp feature
-        asp_wn = mask.sum(dim=1).unsqueeze(-1)  # aspect words num
+        asp_wn = mask.sum(dim=1).unsqueeze(-1)  # aspect words num [batch_size, 1, 1]
+        # [batch_size, maxlen, 1] => [batch_size, maxlen, hidden_dim]
+        # 行重复hidden_dim次
         mask = mask.unsqueeze(-1).repeat(1, 1, self.opt.hidden_dim)  # mask for h
-        outputs1 = (h1 * mask).sum(dim=1) / asp_wn
+        # [batch_size, seq_len, mem_dim] h1和mask同维
+        outputs1 = (h1 * mask).sum(dim=1) / asp_wn  # ?
         outputs2 = (h2 * mask).sum(dim=1) / asp_wn
 
-        return outputs1, outputs2, adj_ag, adj_dep
+        # outputs1=outputs2=[batch_size, 1, mem_dim]
+        # adj_sem=[batch_size, seq_len, seq_len]
+        # adj_syn=[batch_size, maxlen, maxlen]
+        return outputs1, outputs2, adj_sem, adj_syn
 
 
 class GCN(nn.Module):
@@ -235,7 +246,7 @@ class GCN(nn.Module):
             # adj=[batch_size, maxlen, maxlen]
             # outputs_syn=[batch_size, seq_len, num_directions * hidden_size]
             Ax_syn = adj.bmm(outputs_syn)  # [batch_size, seq_len, num_directions*hidden_size]
-            AxW_syn = self.W[layer](Ax_syn)
+            AxW_syn = self.W[layer](Ax_syn)  # [batch_size, seq_len, mem_dim]
             AxW_syn = AxW_syn / denom_syn
             H_syn = F.relu(AxW_syn)
 
@@ -249,10 +260,11 @@ class GCN(nn.Module):
             H_sem = F.relu(AxW_sem)
 
             # * mutual Biaffine module
+            # [batch_size, seq_len, seq_len]
             A1 = F.softmax(torch.bmm(torch.matmul(H_syn, self.affine1), torch.transpose(H_sem, 1, 2)), dim=-1)
             A2 = F.softmax(torch.bmm(torch.matmul(H_sem, self.affine2), torch.transpose(H_syn, 1, 2)), dim=-1)
-            # H_syn_prime=H_syn'
-            # H_sem_prime=H_sem'
+            # H_syn_prime=H_syn' [batch_size, seq_len, mem_dim]
+            # H_sem_prime=H_sem' [batch_size, seq_len, mem_dim]
             H_syn_prime, H_sem_prime = torch.bmm(A1, H_sem), torch.bmm(A2, H_syn)
             outputs_syn = self.gcn_drop(H_syn_prime) if layer < self.layers - 1 else H_syn_prime
             outputs_sem = self.gcn_drop(H_sem_prime) if layer < self.layers - 1 else H_sem_prime
