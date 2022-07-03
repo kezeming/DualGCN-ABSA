@@ -24,11 +24,14 @@ class DualGCNClassifier(nn.Module):
         self.gcn_model = GCNAbsaModel(embedding_matrix=embedding_matrix, opt=opt)
         # 分类器
         self.classifier = nn.Linear(in_dim * 2, opt.polarities_dim)
+        self.clr = nn.Linear(in_dim, opt.polarities_dim)
 
     def forward(self, inputs):
         outputs1, outputs2, adj_sem, adj_syn = self.gcn_model(inputs)
         final_outputs = torch.cat((outputs1, outputs2), dim=-1)  # [batch_size, 1, 2*mem_dim]
         logits = self.classifier(final_outputs)
+        # outputs = torch.div(outputs1+outputs2, 2)
+        # logits = self.clr(outputs1+outputs2)
 
         adj_sem_T = adj_sem.transpose(1, 2)
         identity = torch.eye(adj_sem.size(1)).cuda()
@@ -163,6 +166,8 @@ class GCN(nn.Module):
         self.affine1 = nn.Parameter(torch.Tensor(self.mem_dim, self.mem_dim))
         self.affine2 = nn.Parameter(torch.Tensor(self.mem_dim, self.mem_dim))
 
+        self.leakyrelu = nn.LeakyReLU(opt.gamma)
+
     def encode_with_rnn(self, rnn_inputs, seq_lens, batch_size):
         # h0, c0=[total_layers, batch_size, hidden_dim]
         h0, c0 = rnn_zero_state(batch_size, self.opt.rnn_hidden, self.opt.rnn_layers, self.opt.bidirect)
@@ -218,7 +223,7 @@ class GCN(nn.Module):
         outputs_syn = None
         adj_sem = None
 
-        # * Average Multi-head Attention matrixes
+        # * Average Multi-head Attention matrices
         # * 将多头注意力矩阵相加，然后做平均
         for i in range(self.attention_heads):
             if adj_sem is None:
@@ -248,7 +253,8 @@ class GCN(nn.Module):
             Ax_syn = adj.bmm(outputs_syn)  # [batch_size, seq_len, num_directions*hidden_size]
             AxW_syn = self.W[layer](Ax_syn)  # [batch_size, seq_len, mem_dim]
             AxW_syn = AxW_syn / denom_syn
-            H_syn = F.relu(AxW_syn)
+            # H_syn = F.relu(AxW_syn)
+            H_syn = self.leakyrelu(AxW_syn)
 
             # ************SemGCN*************
             #             基于语义 --ag
@@ -257,7 +263,8 @@ class GCN(nn.Module):
             Ax_sem = adj_sem.bmm(outputs_sem)
             AxW_sem = self.weight_list[layer](Ax_sem)
             AxW_sem = AxW_sem / denom_sem
-            H_sem = F.relu(AxW_sem)
+            # H_sem = F.relu(AxW_sem)
+            H_sem = self.leakyrelu(AxW_sem)
 
             # * mutual Biaffine module
             # [batch_size, seq_len, seq_len]
