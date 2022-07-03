@@ -1,6 +1,6 @@
 '''
-Description: 
-version: 
+Description:
+version:
 Author: chenhao
 Date: 2021-06-09 14:17:37
 '''
@@ -25,6 +25,12 @@ class DualGCNClassifier(nn.Module):
         # 分类器
         self.classifier = nn.Linear(in_dim * 2, opt.polarities_dim)
         self.clr = nn.Linear(in_dim, opt.polarities_dim)
+        self.input_dim = in_dim
+        self.W = nn.ModuleList()
+        for i in range(opt.pyramid):
+            self.W.append(nn.Linear(self.input_dim * 2, self.input_dim))
+            self.input_dim = self.input_dim // 2
+
 
     def forward(self, inputs):
         outputs1, outputs2, adj_sem, adj_syn = self.gcn_model(inputs)
@@ -60,6 +66,7 @@ class DualGCNClassifier(nn.Module):
         # elif self.opt.losstype == 'differentiatedloss':
         #     penal = (adj_sem.size(0) / torch.norm(adj_sem - adj_syn)).cuda()
         #     penal = self.opt.beta * penal
+
 
         return logits, penal
 

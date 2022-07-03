@@ -369,6 +369,7 @@ def main():
     parser.add_argument('--num_layers', type=int, default=2, help='Num of GCN layers.')
     parser.add_argument('--polarities_dim', default=3, type=int, help='3')
     parser.add_argument('--gamma', default=0.2, help='param for the leaky_relu.')
+    parser.add_argument('--pyramid', default=3, help='The Layer nums of Pyramid')
 
     # dropout
     parser.add_argument('--input_dropout', type=float, default=0.7, help='Input dropout rate.')
