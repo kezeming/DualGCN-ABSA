@@ -242,6 +242,8 @@ class GCN(nn.Module):
 
         # [batch_size, seq_len, seq_len] => [batch_size, seq_len] => [batch_size, seq_len, 1]
         denom_sem = adj_sem.sum(2).unsqueeze(2) + 1
+        H_syn = None
+        H_sem = None
         outputs_sem = gcn_inputs
         outputs_syn = gcn_inputs
 
@@ -268,15 +270,16 @@ class GCN(nn.Module):
 
             # * mutual Biaffine module
             # [batch_size, seq_len, seq_len]
-            A1 = F.softmax(torch.bmm(torch.matmul(H_syn, self.affine1), torch.transpose(H_sem, 1, 2)), dim=-1)
-            A2 = F.softmax(torch.bmm(torch.matmul(H_sem, self.affine2), torch.transpose(H_syn, 1, 2)), dim=-1)
-            # H_syn_prime=H_syn' [batch_size, seq_len, mem_dim]
-            # H_sem_prime=H_sem' [batch_size, seq_len, mem_dim]
-            H_syn_prime, H_sem_prime = torch.bmm(A1, H_sem), torch.bmm(A2, H_syn)
-            outputs_syn = self.gcn_drop(H_syn_prime) if layer < self.layers - 1 else H_syn_prime
-            outputs_sem = self.gcn_drop(H_sem_prime) if layer < self.layers - 1 else H_sem_prime
+            # A1 = F.softmax(torch.bmm(torch.matmul(H_syn, self.affine1), torch.transpose(H_sem, 1, 2)), dim=-1)
+            # A2 = F.softmax(torch.bmm(torch.matmul(H_sem, self.affine2), torch.transpose(H_syn, 1, 2)), dim=-1)
+            # # H_syn_prime=H_syn' [batch_size, seq_len, mem_dim]
+            # # H_sem_prime=H_sem' [batch_size, seq_len, mem_dim]
+            # H_syn_prime, H_sem_prime = torch.bmm(A1, H_sem), torch.bmm(A2, H_syn)
+            # outputs_syn = self.gcn_drop(H_syn_prime) if layer < self.layers - 1 else H_syn_prime
+            # outputs_sem = self.gcn_drop(H_sem_prime) if layer < self.layers - 1 else H_sem_prime
 
-        return outputs_sem, outputs_syn, adj_sem
+        # return outputs_sem, outputs_syn, adj_sem
+        return H_syn, H_sem, adj_sem
 
 
 # 根据我们指定的[batch_size, hidden_dim, num_layers, bi-rnn]
