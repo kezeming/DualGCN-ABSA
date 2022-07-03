@@ -48,18 +48,18 @@ class DualGCNClassifier(nn.Module):
         # penal1 = R_O
         # penal2 = R_D
         penal = None
-        if self.opt.losstype == 'doubleloss':
-            penal1 = (torch.norm(ortho - identity) / adj_sem.size(0)).cuda()
-            penal2 = (adj_sem.size(0) / torch.norm(adj_sem - adj_syn)).cuda()
-            penal = self.opt.alpha * penal1 + self.opt.beta * penal2
-
-        elif self.opt.losstype == 'orthogonalloss':
-            penal = (torch.norm(ortho - identity) / adj_sem.size(0)).cuda()
-            penal = self.opt.alpha * penal
-
-        elif self.opt.losstype == 'differentiatedloss':
-            penal = (adj_sem.size(0) / torch.norm(adj_sem - adj_syn)).cuda()
-            penal = self.opt.beta * penal
+        # if self.opt.losstype == 'doubleloss':
+        #     penal1 = (torch.norm(ortho - identity) / adj_sem.size(0)).cuda()
+        #     penal2 = (adj_sem.size(0) / torch.norm(adj_sem - adj_syn)).cuda()
+        #     penal = self.opt.alpha * penal1 + self.opt.beta * penal2
+        #
+        # elif self.opt.losstype == 'orthogonalloss':
+        #     penal = (torch.norm(ortho - identity) / adj_sem.size(0)).cuda()
+        #     penal = self.opt.alpha * penal
+        #
+        # elif self.opt.losstype == 'differentiatedloss':
+        #     penal = (adj_sem.size(0) / torch.norm(adj_sem - adj_syn)).cuda()
+        #     penal = self.opt.beta * penal
 
         return logits, penal
 
