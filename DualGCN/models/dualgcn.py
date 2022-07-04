@@ -25,19 +25,36 @@ class DualGCNClassifier(nn.Module):
         # 分类器
         self.classifier = nn.Linear(in_dim * 2, opt.polarities_dim)
         self.clr = nn.Linear(in_dim, opt.polarities_dim)
+
+        # Pyramid Layer
         self.input_dim = in_dim
         self.W = nn.ModuleList()
-        for i in range(opt.pyramid):
+        total_dim = 0
+        for _ in range(opt.pyramid):
+            total_dim += self.input_dim
             self.W.append(nn.Linear(self.input_dim * 2, self.input_dim))
             self.input_dim = self.input_dim // 2
+        self.Wr = nn.Linear(total_dim, in_dim, bias=True)
+        self.tanh = nn.Tanh()
 
 
     def forward(self, inputs):
         outputs1, outputs2, adj_sem, adj_syn = self.gcn_model(inputs)
         final_outputs = torch.cat((outputs1, outputs2), dim=-1)  # [batch_size, 1, 2*mem_dim]
-        logits = self.classifier(final_outputs)
-        # outputs = torch.div(outputs1+outputs2, 2)
-        # logits = self.clr(outputs1+outputs2)
+        # logits = self.classifier(final_outputs)
+
+        # Pyramid Layer Output
+        all_outputs = None
+        current_output = final_outputs
+        for layer in range(self.opt.pyramid):
+            next_output = self.W[layer](current_output)
+            if all_outputs is None:
+                all_outputs = next_output
+            else:
+                all_outputs = torch.cat((all_outputs, next_output), dim=-1)
+            current_output = next_output
+        fin_outputs = self.tanh(self.Wr(all_outputs))
+        logits = self.clr(fin_outputs)
 
         adj_sem_T = adj_sem.transpose(1, 2)
         identity = torch.eye(adj_sem.size(1)).cuda()
