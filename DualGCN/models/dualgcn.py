@@ -23,8 +23,7 @@ class DualGCNClassifier(nn.Module):
         self.opt = opt
         self.gcn_model = GCNAbsaModel(embedding_matrix=embedding_matrix, opt=opt)
         # 分类器
-        self.classifier = nn.Linear(in_dim * 2, opt.polarities_dim)
-        self.clr = nn.Linear(in_dim, opt.polarities_dim)
+        self.classifier = nn.Linear(in_dim, opt.polarities_dim)
 
         # Pyramid Layer
         self.input_dim = in_dim
@@ -41,7 +40,6 @@ class DualGCNClassifier(nn.Module):
     def forward(self, inputs):
         outputs1, outputs2, adj_sem, adj_syn = self.gcn_model(inputs)
         final_outputs = torch.cat((outputs1, outputs2), dim=-1)  # [batch_size, 1, 2*mem_dim]
-        # logits = self.classifier(final_outputs)
 
         # Pyramid Layer Output
         all_outputs = None
@@ -54,7 +52,7 @@ class DualGCNClassifier(nn.Module):
                 all_outputs = torch.cat((all_outputs, next_output), dim=-1)
             current_output = next_output
         fin_outputs = self.tanh(self.W_r(all_outputs))
-        logits = self.clr(fin_outputs)
+        logits = self.classifier(fin_outputs)
 
         adj_sem_T = adj_sem.transpose(1, 2)
         identity = torch.eye(adj_sem.size(1)).cuda()
@@ -71,18 +69,6 @@ class DualGCNClassifier(nn.Module):
         # penal1 = R_O
         # penal2 = R_D
         penal = None
-        # if self.opt.losstype == 'doubleloss':
-        #     penal1 = (torch.norm(ortho - identity) / adj_sem.size(0)).cuda()
-        #     penal2 = (adj_sem.size(0) / torch.norm(adj_sem - adj_syn)).cuda()
-        #     penal = self.opt.alpha * penal1 + self.opt.beta * penal2
-        #
-        # elif self.opt.losstype == 'orthogonalloss':
-        #     penal = (torch.norm(ortho - identity) / adj_sem.size(0)).cuda()
-        #     penal = self.opt.alpha * penal
-        #
-        # elif self.opt.losstype == 'differentiatedloss':
-        #     penal = (adj_sem.size(0) / torch.norm(adj_sem - adj_syn)).cuda()
-        #     penal = self.opt.beta * penal
 
 
         return logits, penal
@@ -187,8 +173,6 @@ class GCN(nn.Module):
 
         # 双向交互模块，将SynGCN和SemGCN提取的特征进行交互
         # nn.Parameter将一个不可训练的tensor转换成可以训练的类型parameter
-        self.affine1 = nn.Parameter(torch.Tensor(self.mem_dim, self.mem_dim))
-        self.affine2 = nn.Parameter(torch.Tensor(self.mem_dim, self.mem_dim))
 
         self.leakyrelu = nn.LeakyReLU(opt.gamma)
 
@@ -292,15 +276,6 @@ class GCN(nn.Module):
             # H_sem = F.relu(AxW_sem)
             H_sem = self.leakyrelu(AxW_sem)
 
-            # * mutual Biaffine module
-            # [batch_size, seq_len, seq_len]
-            # A1 = F.softmax(torch.bmm(torch.matmul(H_syn, self.affine1), torch.transpose(H_sem, 1, 2)), dim=-1)
-            # A2 = F.softmax(torch.bmm(torch.matmul(H_sem, self.affine2), torch.transpose(H_syn, 1, 2)), dim=-1)
-            # # H_syn_prime=H_syn' [batch_size, seq_len, mem_dim]
-            # # H_sem_prime=H_sem' [batch_size, seq_len, mem_dim]
-            # H_syn_prime, H_sem_prime = torch.bmm(A1, H_sem), torch.bmm(A2, H_syn)
-            # outputs_syn = self.gcn_drop(H_syn_prime) if layer < self.layers - 1 else H_syn_prime
-            # outputs_sem = self.gcn_drop(H_sem_prime) if layer < self.layers - 1 else H_sem_prime
             outputs_syn = self.gcn_drop(H_syn) if layer < self.layers - 1 else H_syn
             outputs_sem = self.gcn_drop(H_sem) if layer < self.layers - 1 else H_sem
 

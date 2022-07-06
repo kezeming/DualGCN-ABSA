@@ -206,10 +206,6 @@ class Instructor:
                 # 输出，惩罚项
                 outputs, penal = self.model(inputs)
                 targets = sample_batched['polarity'].to(self.opt.device)
-                # if self.opt.losstype is not None:
-                #     loss = criterion(outputs, targets) + penal
-                # else:
-                #     loss = criterion(outputs, targets)
                 loss = criterion(outputs, targets)
 
                 # 梯度反向传播
