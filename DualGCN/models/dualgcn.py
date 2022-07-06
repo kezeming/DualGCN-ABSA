@@ -301,6 +301,8 @@ class GCN(nn.Module):
             # H_syn_prime, H_sem_prime = torch.bmm(A1, H_sem), torch.bmm(A2, H_syn)
             # outputs_syn = self.gcn_drop(H_syn_prime) if layer < self.layers - 1 else H_syn_prime
             # outputs_sem = self.gcn_drop(H_sem_prime) if layer < self.layers - 1 else H_sem_prime
+            outputs_syn = self.gcn_drop(H_syn) if layer < self.layers - 1 else H_syn
+            outputs_sem = self.gcn_drop(H_sem) if layer < self.layers - 1 else H_sem
 
         # return outputs_sem, outputs_syn, adj_sem
         return H_syn, H_sem, adj_sem
