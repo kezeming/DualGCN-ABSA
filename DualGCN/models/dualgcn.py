@@ -28,13 +28,13 @@ class DualGCNClassifier(nn.Module):
 
         # Pyramid Layer
         self.input_dim = in_dim
-        self.W = nn.ModuleList()
+        self.pyramid_layer = nn.ModuleList()
         total_dim = 0
         for _ in range(opt.pyramid):
             total_dim += self.input_dim
-            self.W.append(nn.Linear(self.input_dim * 2, self.input_dim))
+            self.pyramid_layer.append(nn.Linear(self.input_dim * 2, self.input_dim))
             self.input_dim = self.input_dim // 2
-        self.Wr = nn.Linear(total_dim, in_dim, bias=True)
+        self.W_r = nn.Linear(total_dim, in_dim, bias=True)
         self.tanh = nn.Tanh()
 
 
@@ -47,13 +47,13 @@ class DualGCNClassifier(nn.Module):
         all_outputs = None
         current_output = final_outputs
         for layer in range(self.opt.pyramid):
-            next_output = self.W[layer](current_output)
+            next_output = self.pyramid_layer[layer](current_output)
             if all_outputs is None:
                 all_outputs = next_output
             else:
                 all_outputs = torch.cat((all_outputs, next_output), dim=-1)
             current_output = next_output
-        fin_outputs = self.tanh(self.Wr(all_outputs))
+        fin_outputs = self.tanh(self.W_r(all_outputs))
         logits = self.clr(fin_outputs)
 
         adj_sem_T = adj_sem.transpose(1, 2)
