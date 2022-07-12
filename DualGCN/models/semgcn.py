@@ -1,6 +1,6 @@
 '''
-Description: 
-version: 
+Description:
+version:
 Author: chenhao
 Date: 2021-06-09 14:17:37
 '''
@@ -21,9 +21,34 @@ class SemGCNClassifier(nn.Module):
         self.gcn_model = GCNAbsaModel(embedding_matrix=embedding_matrix, opt=opt)
         self.classifier = nn.Linear(in_dim, opt.polarities_dim)
 
+        # Pyramid Layer
+        self.input_dim = in_dim
+        self.pyramid_layer = nn.ModuleList()
+        total_dim = 0
+        for _ in range(opt.pyramid):
+            total_dim += self.input_dim
+            self.pyramid_layer.append(nn.Linear(self.input_dim * 2, self.input_dim))
+            self.input_dim = self.input_dim // 2
+        self.W_r = nn.Linear(total_dim, in_dim, bias=True)
+        self.tanh = nn.Tanh()
+
     def forward(self, inputs):
         outputs = self.gcn_model(inputs)
-        logits = self.classifier(outputs)
+        final_outputs = torch.cat((outputs, outputs), dim=-1)  # [batch_size, 1, 2*mem_dim]
+
+        # Pyramid Layer Output
+        all_outputs = None
+        current_output = final_outputs
+        for layer in range(self.opt.pyramid):
+            next_output = self.pyramid_layer[layer](current_output)
+            if all_outputs is None:
+                all_outputs = next_output
+            else:
+                all_outputs = torch.cat((all_outputs, next_output), dim=-1)
+            current_output = next_output
+        fin_outputs = self.tanh(self.W_r(all_outputs))
+
+        logits = self.classifier(fin_outputs)
         return logits, None
 
 
@@ -46,7 +71,7 @@ class GCNAbsaModel(nn.Module):
         mask = mask[:, :maxlen]
 
         h = self.gcn(inputs)
-        
+
         # avg pooling asp feature
         asp_wn = mask.sum(dim=1).unsqueeze(-1)                        # aspect words num
         mask = mask.unsqueeze(-1).repeat(1,1,self.opt.hidden_dim)     # mask for h
@@ -91,9 +116,11 @@ class GCN(nn.Module):
             input_dim = self.in_dim if layer == 0 else self.mem_dim
             self.weight_list.append(nn.Linear(input_dim, self.mem_dim))
 
+        self.leakyrelu = nn.LeakyReLU(opt.gamma)
+
     def encode_with_rnn(self, rnn_inputs, seq_lens, batch_size):
         h0, c0 = rnn_zero_state(batch_size, self.opt.rnn_hidden, self.opt.rnn_layers, self.opt.bidirect)
-        rnn_inputs = nn.utils.rnn.pack_padded_sequence(rnn_inputs, seq_lens, batch_first=True, enforce_sorted=False)
+        rnn_inputs = nn.utils.rnn.pack_padded_sequence(rnn_inputs, seq_lens.cpu(), batch_first=True, enforce_sorted=False)
         rnn_outputs, (ht, ct) = self.rnn(rnn_inputs, (h0, c0))
         rnn_outputs, _ = nn.utils.rnn.pad_packed_sequence(rnn_outputs, batch_first=True)
         return rnn_outputs
@@ -116,32 +143,32 @@ class GCN(nn.Module):
         # rnn layer
         self.rnn.flatten_parameters()
         gcn_inputs = self.rnn_drop(self.encode_with_rnn(embs, l, tok.size()[0]))
-        
+
         attn_tensor = self.attn(gcn_inputs, gcn_inputs, src_mask)
         attn_adj_list = [attn_adj.squeeze(1) for attn_adj in torch.split(attn_tensor, 1, dim=1)]
-        adj_ag = None
+        adj_sem = None
         # * Average Multi-head Attention matrixes
         for i in range(self.attention_heads):
-            if adj_ag is None:
-                adj_ag = attn_adj_list[i]
+            if adj_sem is None:
+                adj_sem = attn_adj_list[i]
             else:
-                adj_ag += attn_adj_list[i]
-        adj_ag = adj_ag / self.attention_heads  # bug fix
+                adj_sem += attn_adj_list[i]
+        adj_sem = adj_sem / self.attention_heads  # bug fix
 
-        for j in range(adj_ag.size(0)):
-            adj_ag[j] -= torch.diag(torch.diag(adj_ag[j]))
-            adj_ag[j] += torch.eye(adj_ag[j].size(0)).cuda()
-        adj_ag = mask_ * adj_ag
-        
-        denom_ag = adj_ag.sum(2).unsqueeze(2) + 1
+        for j in range(adj_sem.size(0)):
+            adj_sem[j] -= torch.diag(torch.diag(adj_sem[j]))
+            adj_sem[j] += torch.eye(adj_sem[j].size(0)).cuda()
+        adj_sem = mask_ * adj_sem
+
+        denom_sem = adj_sem.sum(2).unsqueeze(2) + 1
         outputs = gcn_inputs
 
-        for l in range(self.layers):
-            Ax = adj_ag.bmm(outputs)
-            AxW = self.weight_list[l](Ax)
-            AxW = AxW / denom_ag
-            gAxW = F.relu(AxW)
-            outputs = self.gcn_drop(gAxW) if l < self.layers - 1 else gAxW
+        for layer in range(self.layers):
+            Ax = adj_sem.bmm(outputs)
+            AxW = self.weight_list[layer](Ax)
+            AxW = AxW / denom_sem
+            gAxW = self.leakyrelu(AxW)
+            outputs = self.gcn_drop(gAxW) if layer < self.layers - 1 else gAxW
 
         return outputs
 
@@ -185,11 +212,11 @@ class MultiHeadAttention(nn.Module):
         mask = mask[:, :, :query.size(1)]
         if mask is not None:
             mask = mask.unsqueeze(1)
-        
+
         nbatches = query.size(0)
         query, key = [l(x).view(nbatches, -1, self.h, self.d_k).transpose(1, 2)
                              for l, x in zip(self.linears, (query, key))]
-        
+
         attn = attention(query, key, mask=mask, dropout=self.dropout)
 
         return attn
