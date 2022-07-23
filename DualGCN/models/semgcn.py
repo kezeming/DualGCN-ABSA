@@ -90,8 +90,8 @@ class GCN(nn.Module):
 
         # rnn layer
         input_size = self.in_dim
-        self.rnn = nn.LSTM(input_size, opt.rnn_hidden, opt.rnn_layers, batch_first=True, \
-                dropout=opt.rnn_dropout, bidirectional=opt.bidirect)
+        self.rnn = nn.LSTM(input_size, opt.rnn_hidden, opt.rnn_layers, batch_first=True,
+                           dropout=opt.rnn_dropout, bidirectional=opt.bidirect)
         if opt.bidirect:
             self.in_dim = opt.rnn_hidden * 2
         else:
@@ -152,7 +152,7 @@ class GCN(nn.Module):
             if adj_sem is None:
                 adj_sem = attn_adj_list[i]
             else:
-                adj_sem += attn_adj_list[i]
+                adj_sem = adj_sem + attn_adj_list[i]
         adj_sem = adj_sem / self.attention_heads  # bug fix
 
         for j in range(adj_sem.size(0)):

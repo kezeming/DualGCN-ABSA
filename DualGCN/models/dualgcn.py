@@ -22,6 +22,12 @@ class DualGCNClassifier(nn.Module):
         in_dim = opt.hidden_dim
         self.opt = opt
         self.gcn_model = GCNAbsaModel(embedding_matrix=embedding_matrix, opt=opt)
+
+        # 线性变换
+        self.linear_transfor = nn.ModuleList()
+        for _ in range(2):
+            self.linear_transfor.append(nn.Linear(in_dim, in_dim))
+
         # 分类器
         self.classifier = nn.Linear(in_dim, opt.polarities_dim)
 
@@ -39,6 +45,11 @@ class DualGCNClassifier(nn.Module):
 
     def forward(self, inputs):
         outputs1, outputs2, adj_sem, adj_syn = self.gcn_model(inputs)
+
+        # 线性变换
+        outputs1 = self.linear_transfor[0](outputs1)
+        outputs2 = self.linear_transfor[1](outputs1)
+
         final_outputs = torch.cat((outputs1, outputs2), dim=-1)  # [batch_size, 1, 2*mem_dim]
 
         # Pyramid Layer Output
@@ -69,7 +80,6 @@ class DualGCNClassifier(nn.Module):
         # penal1 = R_O
         # penal2 = R_D
         penal = None
-
 
         return logits, penal
 
@@ -162,7 +172,7 @@ class GCN(nn.Module):
             input_dim = self.in_dim if layer == 0 else self.mem_dim
             self.W.append(nn.Linear(input_dim, self.mem_dim))
 
-        # attention 模块(只有一个注意力头)
+        # attention 模块(只有一个注意力头) 为什么只有一个注意力头？
         self.attention_heads = opt.attention_heads
         self.attn = MultiHeadAttention(self.attention_heads, self.mem_dim * 2)
 
@@ -170,9 +180,6 @@ class GCN(nn.Module):
         for layer in range(self.layers):
             input_dim = self.in_dim if layer == 0 else self.mem_dim
             self.weight_list.append(nn.Linear(input_dim, self.mem_dim))
-
-        # 双向交互模块，将SynGCN和SemGCN提取的特征进行交互
-        # nn.Parameter将一个不可训练的tensor转换成可以训练的类型parameter
 
         self.leakyrelu = nn.LeakyReLU(opt.gamma)
 
@@ -237,7 +244,7 @@ class GCN(nn.Module):
             if adj_sem is None:
                 adj_sem = attn_adj_list[i]
             else:
-                adj_sem += attn_adj_list[i]  # 矩阵对应位置值直接相加
+                adj_sem = adj_sem + attn_adj_list[i]  # 矩阵对应位置值直接相加
         # adj_sem=[batch_size, seq_len, seq_len]
         adj_sem = adj_sem / self.attention_heads  # bug fix！
 

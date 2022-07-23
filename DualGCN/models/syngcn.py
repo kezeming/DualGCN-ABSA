@@ -99,8 +99,8 @@ class GCN(nn.Module):
 
         # rnn layer
         input_size = self.in_dim
-        self.rnn = nn.LSTM(input_size, opt.rnn_hidden, opt.rnn_layers, batch_first=True, \
-                dropout=opt.rnn_dropout, bidirectional=opt.bidirect)
+        self.rnn = nn.LSTM(input_size, opt.rnn_hidden, opt.rnn_layers, batch_first=True,
+                           dropout=opt.rnn_dropout, bidirectional=opt.bidirect)
         if opt.bidirect:
             self.in_dim = opt.rnn_hidden * 2
         else:
