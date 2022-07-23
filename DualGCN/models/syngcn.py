@@ -48,7 +48,7 @@ class SynGCNClassifier(nn.Module):
         fin_outputs = self.tanh(self.W_r(all_outputs))
 
         logits = self.classifier(fin_outputs)
-        return logits, None
+        return logits
 
 class GCNAbsaModel(nn.Module):
     def __init__(self, embedding_matrix, opt):

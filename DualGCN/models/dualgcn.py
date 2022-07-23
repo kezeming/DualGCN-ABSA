@@ -65,23 +65,23 @@ class DualGCNClassifier(nn.Module):
         fin_outputs = self.tanh(self.W_r(all_outputs))
         logits = self.classifier(fin_outputs)
 
-        adj_sem_T = adj_sem.transpose(1, 2)
-        identity = torch.eye(adj_sem.size(1)).cuda()
+        # adj_sem_T = adj_sem.transpose(1, 2)
+        # identity = torch.eye(adj_sem.size(1)).cuda()
         # [batch_size, seq_len, seq_len]
-        identity = identity.unsqueeze(0).expand(adj_sem.size(0), adj_sem.size(1), adj_sem.size(1))
+        # identity = identity.unsqueeze(0).expand(adj_sem.size(0), adj_sem.size(1), adj_sem.size(1))
         # A*A^T
-        ortho = adj_sem @ adj_sem_T
+        # ortho = adj_sem @ adj_sem_T
 
-        for i in range(ortho.size(0)):
-            ortho[i] -= torch.diag(torch.diag(ortho[i]))  # 每个ortho正交矩阵的对角线元素置0
-            ortho[i] += torch.eye(ortho[i].size(0)).cuda()  # 每个ortho正交矩阵的对角线元素置1
+        # for i in range(ortho.size(0)):
+        #     ortho[i] -= torch.diag(torch.diag(ortho[i]))  # 每个ortho正交矩阵的对角线元素置0
+        #     ortho[i] += torch.eye(ortho[i].size(0)).cuda()  # 每个ortho正交矩阵的对角线元素置1
 
         # 根据loss类型设置正则化项
         # penal1 = R_O
         # penal2 = R_D
         penal = None
 
-        return logits, penal
+        return logits
 
 
 class GCNAbsaModel(nn.Module):
@@ -263,7 +263,7 @@ class GCN(nn.Module):
         outputs_syn = gcn_inputs
 
         for layer in range(self.layers):
-            # ************SynGCN*************
+            # ************SynGAT*************
             #             基于语法 --dep
             # adj=[batch_size, maxlen, maxlen]
             # outputs_syn=[batch_size, seq_len, num_directions * hidden_size]
@@ -273,7 +273,7 @@ class GCN(nn.Module):
             # H_syn = F.relu(AxW_syn)
             H_syn = self.leakyrelu(AxW_syn)
 
-            # ************SemGCN*************
+            # ************SemGAT*************
             #             基于语义 --ag
             # adj_sem=[batch_size, seq_len, seq_len]
             # outputs_sem=[batch_size, seq_len, num_directions * hidden_size]

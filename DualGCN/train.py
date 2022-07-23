@@ -204,7 +204,7 @@ class Instructor:
                 #     logger.info('inputs={}的shape[{}]'.format(col, sample_batched[col].shape))
                 inputs = [sample_batched[col].to(self.opt.device) for col in self.opt.inputs_cols]
                 # 输出，惩罚项
-                outputs, penal = self.model(inputs)
+                outputs = self.model(inputs)
                 targets = sample_batched['polarity'].to(self.opt.device)
                 loss = criterion(outputs, targets)
 

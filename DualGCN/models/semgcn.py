@@ -49,7 +49,7 @@ class SemGCNClassifier(nn.Module):
         fin_outputs = self.tanh(self.W_r(all_outputs))
 
         logits = self.classifier(fin_outputs)
-        return logits, None
+        return logits
 
 
 class GCNAbsaModel(nn.Module):
