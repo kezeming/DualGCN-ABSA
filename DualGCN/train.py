@@ -41,6 +41,7 @@ def setup_seed(seed):
     torch.cuda.manual_seed_all(seed)  # 所有GPU
     np.random.seed(seed)
     random.seed(seed)
+    torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True  # 置True，每次返回的卷积算法是确定的，即默认算法
 
 
@@ -204,8 +205,9 @@ class Instructor:
                 #     logger.info('inputs={}的shape[{}]'.format(col, sample_batched[col].shape))
                 inputs = [sample_batched[col].to(self.opt.device) for col in self.opt.inputs_cols]
                 # 输出，惩罚项
-                outputs = self.model(inputs)
+                outputs, penal = self.model(inputs)
                 targets = sample_batched['polarity'].to(self.opt.device)
+                # loss = criterion(outputs, targets) + penal
                 loss = criterion(outputs, targets)
 
                 # 梯度反向传播

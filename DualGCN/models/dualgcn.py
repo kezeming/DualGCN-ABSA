@@ -1,7 +1,7 @@
 '''
 Description:
 version:
-Author: chenhao
+Author: kzm
 Date: 2021-06-09 14:17:37
 '''
 import copy
@@ -39,7 +39,7 @@ class DualGCNClassifier(nn.Module):
             total_dim += self.input_dim
             self.pyramid_layer.append(nn.Linear(self.input_dim * 2, self.input_dim))
             self.input_dim = self.input_dim // 2
-        self.W_r = nn.Linear(total_dim, in_dim, bias=True)
+        self.W_r = nn.Linear(total_dim, in_dim, bias=False)
         self.tanh = nn.Tanh()
 
 
@@ -47,8 +47,8 @@ class DualGCNClassifier(nn.Module):
         outputs1, outputs2, adj_sem, adj_syn = self.gcn_model(inputs)
 
         # 线性变换
-        outputs1 = self.linear_transfor[0](outputs1)
-        outputs2 = self.linear_transfor[1](outputs1)
+        outputs1 = self.opt.alpha * self.linear_transfor[0](outputs1)
+        outputs2 = self.opt.beta * self.linear_transfor[1](outputs2)
 
         final_outputs = torch.cat((outputs1, outputs2), dim=-1)  # [batch_size, 1, 2*mem_dim]
 
@@ -79,9 +79,10 @@ class DualGCNClassifier(nn.Module):
         # 根据loss类型设置正则化项
         # penal1 = R_O
         # penal2 = R_D
-        penal = None
+        penal = (adj_sem.size(0) / torch.norm(adj_sem - adj_syn)).cuda()
 
-        return logits
+        return logits, penal
+
 
 
 class GCNAbsaModel(nn.Module):
@@ -299,6 +300,7 @@ def rnn_zero_state(batch_size, hidden_dim, num_layers, bidirectional=True):
     h0 = c0 = Variable(torch.zeros(*state_shape), requires_grad=False)
     # 这里将初始隐藏态h0和初始元胞态c0移到gpu中计算
     return h0.cuda(), c0.cuda()
+
 
 
 # 根据query，key计算注意力权重
