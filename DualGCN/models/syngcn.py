@@ -1,7 +1,7 @@
 '''
 Description: 
 version: 
-Author: chenhao
+Author: kzm
 Date: 2021-06-09 14:17:37
 '''
 import torch
@@ -20,9 +20,34 @@ class SynGCNClassifier(nn.Module):
         self.gcn_model = GCNAbsaModel(embedding_matrix=embedding_matrix, opt=opt)
         self.classifier = nn.Linear(in_dim, opt.polarities_dim)
 
+        # Pyramid Layer
+        self.input_dim = in_dim
+        self.pyramid_layer = nn.ModuleList()
+        total_dim = 0
+        for _ in range(opt.pyramid):
+            total_dim += self.input_dim
+            self.pyramid_layer.append(nn.Linear(self.input_dim * 2, self.input_dim))
+            self.input_dim = self.input_dim // 2
+        self.W_r = nn.Linear(total_dim, in_dim, bias=True)
+        self.tanh = nn.Tanh()
+
     def forward(self, inputs):
         outputs = self.gcn_model(inputs)
-        logits = self.classifier(outputs)
+        final_outputs = torch.cat((outputs, outputs), dim=-1)  # [batch_size, 1, 2*mem_dim]
+
+        # Pyramid Layer Output
+        all_outputs = None
+        current_output = final_outputs
+        for layer in range(self.opt.pyramid):
+            next_output = self.pyramid_layer[layer](current_output)
+            if all_outputs is None:
+                all_outputs = next_output
+            else:
+                all_outputs = torch.cat((all_outputs, next_output), dim=-1)
+            current_output = next_output
+        fin_outputs = self.tanh(self.W_r(all_outputs))
+
+        logits = self.classifier(fin_outputs)
         return logits, None
 
 class GCNAbsaModel(nn.Module):
@@ -55,7 +80,7 @@ class GCNAbsaModel(nn.Module):
             adj_dep = inputs_to_tree_reps(head.data, tok.data, l.data)
 
         h = self.gcn(adj_dep, inputs)
-        
+
         # avg pooling asp feature
         asp_wn = mask.sum(dim=1).unsqueeze(-1)                        # aspect words num
         mask = mask.unsqueeze(-1).repeat(1,1,self.opt.hidden_dim)     # mask for h
@@ -92,9 +117,11 @@ class GCN(nn.Module):
             input_dim = self.in_dim if layer == 0 else self.mem_dim
             self.W.append(nn.Linear(input_dim, self.mem_dim))
 
+        self.leakyrelu = nn.LeakyReLU(opt.gamma)
+
     def encode_with_rnn(self, rnn_inputs, seq_lens, batch_size):
         h0, c0 = rnn_zero_state(batch_size, self.opt.rnn_hidden, self.opt.rnn_layers, self.opt.bidirect)
-        rnn_inputs = nn.utils.rnn.pack_padded_sequence(rnn_inputs, seq_lens, batch_first=True, enforce_sorted=False)
+        rnn_inputs = nn.utils.rnn.pack_padded_sequence(rnn_inputs, seq_lens.cpu(), batch_first=True, enforce_sorted=False)
         rnn_outputs, (ht, ct) = self.rnn(rnn_inputs, (h0, c0))
         rnn_outputs, _ = nn.utils.rnn.pad_packed_sequence(rnn_outputs, batch_first=True)
         return rnn_outputs
@@ -114,18 +141,20 @@ class GCN(nn.Module):
         # rnn layer
         self.rnn.flatten_parameters()
         gcn_inputs = self.rnn_drop(self.encode_with_rnn(embs, l, tok.size()[0]))
-        
+
         # gcn layer
         denom = adj.sum(2).unsqueeze(2) + 1
 
-        for l in range(self.layers):
-            Ax = adj.bmm(gcn_inputs)
-            AxW = self.W[l](Ax)
+        outputs = gcn_inputs
+
+        for layer in range(self.layers):
+            Ax = adj.bmm(outputs)
+            AxW = self.W[layer](Ax)
             AxW = AxW / denom
-            gAxW = F.relu(AxW)
-            gcn_inputs = self.gcn_drop(gAxW) if l < self.layers - 1 else gAxW
- 
-        return gcn_inputs
+            gAxW = self.leakyrelu(AxW)
+            outputs = self.gcn_drop(gAxW) if layer < self.layers - 1 else gAxW
+
+        return outputs
 
 
 def rnn_zero_state(batch_size, hidden_dim, num_layers, bidirectional=True):
@@ -133,3 +162,4 @@ def rnn_zero_state(batch_size, hidden_dim, num_layers, bidirectional=True):
     state_shape = (total_layers, batch_size, hidden_dim)
     h0 = c0 = Variable(torch.zeros(*state_shape), requires_grad=False)
     return h0.cuda(), c0.cuda()
+

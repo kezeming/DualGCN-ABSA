@@ -1,3 +1,6 @@
-### Please put the pre-trained word vectors in this folder.
+### Please put the best_parser.pt in this folder.
 
-[https://nlp.stanford.edu/projects/glove/](https://nlp.stanford.edu/projects/glove/) or [https://apache-mxnet.s3.cn-north-1.amazonaws.com.cn/gluon/embeddings/glove/glove.840B.300d.zip](https://apache-mxnet.s3.cn-north-1.amazonaws.com.cn/gluon/embeddings/glove/glove.840B.300d.zip)
+Baidu Netdisk: [[Link]](https://pan.baidu.com/s/1N1C3HFL4Yjn--WO9ImHtHg) pw: bn3s
+
+Please see the following link for more details:
+`https://github.com/KhalilMrini/LAL-Parser#Pre-trained-models`

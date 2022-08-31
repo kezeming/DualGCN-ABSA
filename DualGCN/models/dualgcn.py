@@ -1,7 +1,7 @@
 '''
 Description:
 version:
-Author: chenhao
+Author: kzm
 Date: 2021-06-09 14:17:37
 '''
 import copy
@@ -22,70 +22,67 @@ class DualGCNClassifier(nn.Module):
         in_dim = opt.hidden_dim
         self.opt = opt
         self.gcn_model = GCNAbsaModel(embedding_matrix=embedding_matrix, opt=opt)
+
+        # 线性变换
+        self.linear_transfor = nn.ModuleList()
+        for _ in range(2):
+            self.linear_transfor.append(nn.Linear(in_dim, in_dim))
+
         # 分类器
-        self.classifier = nn.Linear(in_dim * 2, opt.polarities_dim)
-        self.clr = nn.Linear(in_dim, opt.polarities_dim)
+        self.classifier = nn.Linear(in_dim, opt.polarities_dim)
 
         # Pyramid Layer
         self.input_dim = in_dim
-        self.W = nn.ModuleList()
+        self.pyramid_layer = nn.ModuleList()
         total_dim = 0
         for _ in range(opt.pyramid):
             total_dim += self.input_dim
-            self.W.append(nn.Linear(self.input_dim * 2, self.input_dim))
+            self.pyramid_layer.append(nn.Linear(self.input_dim * 2, self.input_dim))
             self.input_dim = self.input_dim // 2
-        self.Wr = nn.Linear(total_dim, in_dim, bias=True)
+        self.W_r = nn.Linear(total_dim, in_dim, bias=False)
         self.tanh = nn.Tanh()
 
 
     def forward(self, inputs):
         outputs1, outputs2, adj_sem, adj_syn = self.gcn_model(inputs)
+
+        # 线性变换
+        outputs1 = self.opt.alpha * self.linear_transfor[0](outputs1)
+        outputs2 = self.opt.beta * self.linear_transfor[1](outputs2)
+
         final_outputs = torch.cat((outputs1, outputs2), dim=-1)  # [batch_size, 1, 2*mem_dim]
-        # logits = self.classifier(final_outputs)
 
         # Pyramid Layer Output
         all_outputs = None
         current_output = final_outputs
         for layer in range(self.opt.pyramid):
-            next_output = self.W[layer](current_output)
+            next_output = self.pyramid_layer[layer](current_output)
             if all_outputs is None:
                 all_outputs = next_output
             else:
                 all_outputs = torch.cat((all_outputs, next_output), dim=-1)
             current_output = next_output
-        fin_outputs = self.tanh(self.Wr(all_outputs))
-        logits = self.clr(fin_outputs)
+        fin_outputs = self.tanh(self.W_r(all_outputs))
+        logits = self.classifier(fin_outputs)
 
-        adj_sem_T = adj_sem.transpose(1, 2)
-        identity = torch.eye(adj_sem.size(1)).cuda()
+        # adj_sem_T = adj_sem.transpose(1, 2)
+        # identity = torch.eye(adj_sem.size(1)).cuda()
         # [batch_size, seq_len, seq_len]
-        identity = identity.unsqueeze(0).expand(adj_sem.size(0), adj_sem.size(1), adj_sem.size(1))
+        # identity = identity.unsqueeze(0).expand(adj_sem.size(0), adj_sem.size(1), adj_sem.size(1))
         # A*A^T
-        ortho = adj_sem @ adj_sem_T
+        # ortho = adj_sem @ adj_sem_T
 
-        for i in range(ortho.size(0)):
-            ortho[i] -= torch.diag(torch.diag(ortho[i]))  # 每个ortho正交矩阵的对角线元素置0
-            ortho[i] += torch.eye(ortho[i].size(0)).cuda()  # 每个ortho正交矩阵的对角线元素置1
+        # for i in range(ortho.size(0)):
+        #     ortho[i] -= torch.diag(torch.diag(ortho[i]))  # 每个ortho正交矩阵的对角线元素置0
+        #     ortho[i] += torch.eye(ortho[i].size(0)).cuda()  # 每个ortho正交矩阵的对角线元素置1
 
         # 根据loss类型设置正则化项
         # penal1 = R_O
         # penal2 = R_D
-        penal = None
-        # if self.opt.losstype == 'doubleloss':
-        #     penal1 = (torch.norm(ortho - identity) / adj_sem.size(0)).cuda()
-        #     penal2 = (adj_sem.size(0) / torch.norm(adj_sem - adj_syn)).cuda()
-        #     penal = self.opt.alpha * penal1 + self.opt.beta * penal2
-        #
-        # elif self.opt.losstype == 'orthogonalloss':
-        #     penal = (torch.norm(ortho - identity) / adj_sem.size(0)).cuda()
-        #     penal = self.opt.alpha * penal
-        #
-        # elif self.opt.losstype == 'differentiatedloss':
-        #     penal = (adj_sem.size(0) / torch.norm(adj_sem - adj_syn)).cuda()
-        #     penal = self.opt.beta * penal
-
+        penal = (adj_sem.size(0) / torch.norm(adj_sem - adj_syn)).cuda()
 
         return logits, penal
+
 
 
 class GCNAbsaModel(nn.Module):
@@ -176,7 +173,7 @@ class GCN(nn.Module):
             input_dim = self.in_dim if layer == 0 else self.mem_dim
             self.W.append(nn.Linear(input_dim, self.mem_dim))
 
-        # attention 模块(只有一个注意力头)
+        # attention 模块(只有一个注意力头) 为什么只有一个注意力头？
         self.attention_heads = opt.attention_heads
         self.attn = MultiHeadAttention(self.attention_heads, self.mem_dim * 2)
 
@@ -184,11 +181,6 @@ class GCN(nn.Module):
         for layer in range(self.layers):
             input_dim = self.in_dim if layer == 0 else self.mem_dim
             self.weight_list.append(nn.Linear(input_dim, self.mem_dim))
-
-        # 双向交互模块，将SynGCN和SemGCN提取的特征进行交互
-        # nn.Parameter将一个不可训练的tensor转换成可以训练的类型parameter
-        self.affine1 = nn.Parameter(torch.Tensor(self.mem_dim, self.mem_dim))
-        self.affine2 = nn.Parameter(torch.Tensor(self.mem_dim, self.mem_dim))
 
         self.leakyrelu = nn.LeakyReLU(opt.gamma)
 
@@ -253,7 +245,7 @@ class GCN(nn.Module):
             if adj_sem is None:
                 adj_sem = attn_adj_list[i]
             else:
-                adj_sem += attn_adj_list[i]  # 矩阵对应位置值直接相加
+                adj_sem = adj_sem + attn_adj_list[i]  # 矩阵对应位置值直接相加
         # adj_sem=[batch_size, seq_len, seq_len]
         adj_sem = adj_sem / self.attention_heads  # bug fix！
 
@@ -272,7 +264,7 @@ class GCN(nn.Module):
         outputs_syn = gcn_inputs
 
         for layer in range(self.layers):
-            # ************SynGCN*************
+            # ************SynGAT*************
             #             基于语法 --dep
             # adj=[batch_size, maxlen, maxlen]
             # outputs_syn=[batch_size, seq_len, num_directions * hidden_size]
@@ -282,7 +274,7 @@ class GCN(nn.Module):
             # H_syn = F.relu(AxW_syn)
             H_syn = self.leakyrelu(AxW_syn)
 
-            # ************SemGCN*************
+            # ************SemGAT*************
             #             基于语义 --ag
             # adj_sem=[batch_size, seq_len, seq_len]
             # outputs_sem=[batch_size, seq_len, num_directions * hidden_size]
@@ -292,15 +284,8 @@ class GCN(nn.Module):
             # H_sem = F.relu(AxW_sem)
             H_sem = self.leakyrelu(AxW_sem)
 
-            # * mutual Biaffine module
-            # [batch_size, seq_len, seq_len]
-            # A1 = F.softmax(torch.bmm(torch.matmul(H_syn, self.affine1), torch.transpose(H_sem, 1, 2)), dim=-1)
-            # A2 = F.softmax(torch.bmm(torch.matmul(H_sem, self.affine2), torch.transpose(H_syn, 1, 2)), dim=-1)
-            # # H_syn_prime=H_syn' [batch_size, seq_len, mem_dim]
-            # # H_sem_prime=H_sem' [batch_size, seq_len, mem_dim]
-            # H_syn_prime, H_sem_prime = torch.bmm(A1, H_sem), torch.bmm(A2, H_syn)
-            # outputs_syn = self.gcn_drop(H_syn_prime) if layer < self.layers - 1 else H_syn_prime
-            # outputs_sem = self.gcn_drop(H_sem_prime) if layer < self.layers - 1 else H_sem_prime
+            outputs_syn = self.gcn_drop(H_syn) if layer < self.layers - 1 else H_syn
+            outputs_sem = self.gcn_drop(H_sem) if layer < self.layers - 1 else H_sem
 
         # return outputs_sem, outputs_syn, adj_sem
         return H_syn, H_sem, adj_sem
@@ -315,6 +300,7 @@ def rnn_zero_state(batch_size, hidden_dim, num_layers, bidirectional=True):
     h0 = c0 = Variable(torch.zeros(*state_shape), requires_grad=False)
     # 这里将初始隐藏态h0和初始元胞态c0移到gpu中计算
     return h0.cuda(), c0.cuda()
+
 
 
 # 根据query，key计算注意力权重
@@ -370,3 +356,4 @@ class MultiHeadAttention(nn.Module):
         # attn = [batch_size, heads, seq_len, seq_len]
         attn = attention(query, key, mask=mask, dropout=self.dropout)
         return attn
+

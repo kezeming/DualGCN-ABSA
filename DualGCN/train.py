@@ -41,6 +41,7 @@ def setup_seed(seed):
     torch.cuda.manual_seed_all(seed)  # 所有GPU
     np.random.seed(seed)
     random.seed(seed)
+    torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True  # 置True，每次返回的卷积算法是确定的，即默认算法
 
 
@@ -122,6 +123,7 @@ class Instructor:
         for p in self.model.parameters():
             if p.requires_grad:
                 if len(p.shape) > 1:
+                    logger.info(p)
                     self.opt.initializer(p)  # xavier_uniform_
                 else:
                     stdv = 1. / (p.shape[0] ** 0.5)
@@ -206,10 +208,8 @@ class Instructor:
                 # 输出，惩罚项
                 outputs, penal = self.model(inputs)
                 targets = sample_batched['polarity'].to(self.opt.device)
-                if self.opt.losstype is not None:
-                    loss = criterion(outputs, targets) + penal
-                else:
-                    loss = criterion(outputs, targets)
+                # loss = criterion(outputs, targets) + penal
+                loss = criterion(outputs, targets)
 
                 # 梯度反向传播
                 loss.backward()
@@ -433,3 +433,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
