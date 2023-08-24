@@ -65,20 +65,6 @@ class DualGCNClassifier(nn.Module):
         fin_outputs = self.tanh(self.W_r(all_outputs))
         logits = self.classifier(fin_outputs)
 
-        # adj_sem_T = adj_sem.transpose(1, 2)
-        # identity = torch.eye(adj_sem.size(1)).cuda()
-        # [batch_size, seq_len, seq_len]
-        # identity = identity.unsqueeze(0).expand(adj_sem.size(0), adj_sem.size(1), adj_sem.size(1))
-        # A*A^T
-        # ortho = adj_sem @ adj_sem_T
-
-        # for i in range(ortho.size(0)):
-        #     ortho[i] -= torch.diag(torch.diag(ortho[i]))  # 每个ortho正交矩阵的对角线元素置0
-        #     ortho[i] += torch.eye(ortho[i].size(0)).cuda()  # 每个ortho正交矩阵的对角线元素置1
-
-        # 根据loss类型设置正则化项
-        # penal1 = R_O
-        # penal2 = R_D
         penal = (adj_sem.size(0) / torch.norm(adj_sem - adj_syn)).cuda()
 
         return logits, penal

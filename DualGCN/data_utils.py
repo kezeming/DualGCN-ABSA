@@ -58,6 +58,45 @@ def ParseData(data_path):
     return all_data
 
 
+def ParseBertData(data_path):
+    with open(data_path) as infile:
+        all_data = []
+        data = json.load(infile)
+        for d in data:
+            for aspect in d['aspects']:
+                text_list = list(d['token'])
+                tok = list(d['token'])  # word token
+                length = len(tok)  # real length
+                # if args.lower == True:
+                tok = [t.lower() for t in tok]
+                tok = ' '.join(tok)
+                asp = list(aspect['term'])  # aspect
+                asp = [a.lower() for a in asp]
+                asp = ' '.join(asp)
+                label = aspect['polarity']  # label
+                # position
+                # 算出对应的位置编码，观点词左边用负数偏移量填充，观点词用0填充，观点词右边用正数偏移量填充
+                aspect_post = [aspect['from'], aspect['to']]
+                post = [i - aspect['from'] for i in range(aspect['from'])] + \
+                       [0 for _ in range(aspect['from'], aspect['to'])] + \
+                       [i - aspect['to'] + 1 for i in range(aspect['to'], length)]
+                # aspect mask
+                # 将方面词对应的范围用1掩码，其余都用0填充
+                if len(asp) == 0:
+                    mask = [1 for _ in range(length)]  # for rest16
+                else:
+                    mask = [0 for _ in range(aspect['from'])] + \
+                           [1 for _ in range(aspect['from'], aspect['to'])] + \
+                           [0 for _ in range(aspect['to'], length)]
+
+                sample = {'text': tok, 'aspect': asp, 'post': post,
+                          'length': length, 'label': label, 'mask': mask,
+                          'aspect_post': aspect_post, 'text_list': text_list}
+                all_data.append(sample)
+
+    return all_data
+
+
 # 若指定目录data_file下有分词器，直接加载；
 # 若无，则新建一个分词器；
 def build_tokenizer(fnames, max_length, data_file):
@@ -326,7 +365,7 @@ class Tokenizer4BertGCN:
 class ABSAGCNData(Dataset):
     def __init__(self, fname, tokenizer, opt):
         self.data = []
-        parse = ParseData
+        parse = ParseBertData
         polarity_dict = {'positive':0, 'negative':1, 'neutral':2}
         for obj in tqdm(parse(fname), total=len(parse(fname)), desc="Training examples"):
             polarity = polarity_dict[obj['label']]

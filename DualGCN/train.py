@@ -23,6 +23,7 @@ from models.atae_lstm import ATAE_LSTM
 from models.syngcn import SynGCNClassifier
 from models.semgcn import SemGCNClassifier
 from models.dualgcn import DualGCNClassifier
+from models.dualgat import CoGATlassifier
 from models.dualgcn_bert import DualGCNBertClassifier
 from data_utils import SentenceDataset, build_tokenizer, build_embedding_matrix, Tokenizer4BertGCN, ABSAGCNData
 from prepare_vocab import VocabHelp
@@ -41,7 +42,7 @@ def setup_seed(seed):
     torch.cuda.manual_seed_all(seed)  # 所有GPU
     np.random.seed(seed)
     random.seed(seed)
-    torch.backends.cudnn.benchmark = False
+    # torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True  # 置True，每次返回的卷积算法是确定的，即默认算法
 
 
@@ -123,7 +124,6 @@ class Instructor:
         for p in self.model.parameters():
             if p.requires_grad:
                 if len(p.shape) > 1:
-                    logger.info(p)
                     self.opt.initializer(p)  # xavier_uniform_
                 else:
                     stdv = 1. / (p.shape[0] ** 0.5)
@@ -208,8 +208,12 @@ class Instructor:
                 # 输出，惩罚项
                 outputs, penal = self.model(inputs)
                 targets = sample_batched['polarity'].to(self.opt.device)
-                # loss = criterion(outputs, targets) + penal
-                loss = criterion(outputs, targets)
+                # if self.opt.dataset == "laptop" or self.opt.dataset == 'twitter':
+                #     loss = criterion(outputs, targets)
+                # else:
+                #     loss = criterion(outputs, targets) + penal
+                loss = criterion(outputs, targets) + penal
+
 
                 # 梯度反向传播
                 loss.backward()
@@ -240,15 +244,28 @@ class Instructor:
 
     def _evaluate(self, show_results=False):
         # switch model to evaluation mode
+        if not os.path.exists('./DualGCN/CaseStudy'):
+            os.mkdir('./DualGCN/CaseStudy')
+        Note=open('./DualGCN/CaseStudy/{}_{}_Case.txt'.format(self.opt.model_name, self.opt.dataset), mode='w')
         self.model.eval()
         n_test_correct, n_test_total = 0, 0
         targets_all, outputs_all = None, None
+        polarity_dict_bc = {0: 'positive', 1: 'negative', 2: 'neutral'}
         with torch.no_grad():
             for batch, sample_batched in enumerate(self.test_dataloader):
                 inputs = [sample_batched[col].to(self.opt.device) for col in self.opt.inputs_cols]
                 targets = sample_batched['polarity'].to(self.opt.device)
                 outputs, penal = self.model(inputs)
                 n_test_correct += (torch.argmax(outputs, -1) == targets).sum().item()
+                if  show_results:
+                    for idx, res in enumerate((torch.argmax(outputs, -1) == targets), 0):
+                        if not res.item():
+                            print(sample_batched['text_ori'][idx])
+                            print(sample_batched['aspect_ori'][idx])
+                            Note.write(sample_batched['text_ori'][idx] + "\n")
+                            Note.write(sample_batched['aspect_ori'][idx] + ":backgroup=" + polarity_dict_bc[targets[idx].item()] + ",  predict=" + polarity_dict_bc[torch.argmax(outputs, -1)[idx].item()] + "\n")
+                            Note.write('#' * 60)
+
                 n_test_total += len(outputs)
                 # dim=0，将所有的targets和outputs按行来拼接到一起
                 targets_all = torch.cat((targets_all, targets), dim=0) if targets_all is not None else targets
@@ -307,6 +324,7 @@ def main():
         'syngcn': SynGCNClassifier,
         'semgcn': SemGCNClassifier,
         'dualgcn': DualGCNClassifier,
+        'dualgat': CoGATlassifier,
         'dualgcnbert': DualGCNBertClassifier,
     }
 

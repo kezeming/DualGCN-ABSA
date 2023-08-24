@@ -33,34 +33,52 @@ class DualGCNBertClassifier(nn.Module):
         self.opt = opt
         self.gcn_model = GCNAbsaModel(bert, opt=opt)
         self.classifier = nn.Linear(opt.bert_dim*2, opt.polarities_dim)
+        in_dim = opt.hidden_dim
+
+        # 线性变换
+        self.linear_transfor = nn.ModuleList()
+        for _ in range(2):
+            self.linear_transfor.append(nn.Linear(in_dim // 2, in_dim // 2))
+
+        # 分类器
+        self.classifier = nn.Linear(in_dim, opt.polarities_dim)
+
+        # Pyramid Layer
+        self.input_dim = in_dim
+        self.pyramid_layer = nn.ModuleList()
+        total_dim = 0
+        for _ in range(opt.pyramid):
+            total_dim += self.input_dim
+            self.pyramid_layer.append(nn.Linear(self.input_dim * 2, self.input_dim))
+            self.input_dim = self.input_dim // 2
+
+        self.pyramid_alaph = nn.Linear(total_dim, total_dim)
+        self.W_r = nn.Linear(total_dim, in_dim, bias=False)
+        self.tanh = nn.Tanh()
 
     def forward(self, inputs):
-        outputs1, outputs2, adj_ag, adj_dep, pooled_output = self.gcn_model(inputs)
-        final_outputs = torch.cat((outputs1, outputs2, pooled_output), dim=-1)
-        logits = self.classifier(final_outputs)
+        outputs1, outputs2, adj_sem, adj_syn, pooled_output = self.gcn_model(inputs)
 
-        adj_ag_T = adj_ag.transpose(1, 2)
-        identity = torch.eye(adj_ag.size(1)).cuda()
-        identity = identity.unsqueeze(0).expand(adj_ag.size(0), adj_ag.size(1), adj_ag.size(1))
-        ortho = adj_ag@adj_ag_T
+        # 线性变换
+        outputs1 = self.opt.alpha * self.linear_transfor[0](outputs1)
+        outputs2 = self.opt.beta * self.linear_transfor[1](outputs2)
 
-        for i in range(ortho.size(0)):
-            ortho[i] -= torch.diag(torch.diag(ortho[i]))
-            ortho[i] += torch.eye(ortho[i].size(0)).cuda()
+        final_outputs = torch.cat((outputs1, outputs2), dim=-1)  # [batch_size, 1, 2*mem_dim]
 
-        penal = None
-        if self.opt.losstype == 'doubleloss':
-            penal1 = (torch.norm(ortho - identity) / adj_ag.size(0)).cuda()
-            penal2 = (adj_ag.size(0) / torch.norm(adj_ag - adj_dep)).cuda()
-            penal = self.opt.alpha * penal1 + self.opt.beta * penal2
-        
-        elif self.opt.losstype == 'orthogonalloss':
-            penal = (torch.norm(ortho - identity) / adj_ag.size(0)).cuda()
-            penal = self.opt.alpha * penal
+        # Pyramid Layer Output
+        all_outputs = None
+        current_output = final_outputs
+        for layer in range(self.opt.pyramid):
+            next_output = self.pyramid_layer[layer](current_output)
+            if all_outputs is None:
+                all_outputs = next_output
+            else:
+                all_outputs = torch.cat((all_outputs, next_output), dim=-1)
+            current_output = next_output
+        fin_outputs = self.tanh(self.W_r(self.pyramid_alaph(all_outputs)))
+        logits = self.classifier(fin_outputs)
 
-        elif self.opt.losstype == 'differentiatedloss':
-            penal = (adj_ag.size(0) / torch.norm(adj_ag - adj_dep)).cuda()
-            penal = self.opt.beta * penal
+        penal = (adj_sem.size(0) / torch.norm(adj_sem - adj_syn)).cuda()
         
         return logits, penal
 
@@ -109,8 +127,7 @@ class GCNBert(nn.Module):
             input_dim = self.bert_dim if j == 0 else self.mem_dim
             self.weight_list.append(nn.Linear(input_dim, self.mem_dim))
 
-        self.affine1 = nn.Parameter(torch.Tensor(self.mem_dim, self.mem_dim))
-        self.affine2 = nn.Parameter(torch.Tensor(self.mem_dim, self.mem_dim))
+        self.leakyrelu = nn.LeakyReLU(opt.gamma)
 
     def forward(self, adj, inputs):
         text_bert_indices, bert_segments_ids, attention_mask, asp_start, asp_end, adj_dep, src_mask, aspect_mask = inputs
@@ -121,51 +138,51 @@ class GCNBert(nn.Module):
         gcn_inputs = self.bert_drop(sequence_output)
         pooled_output = self.pooled_drop(pooled_output)
 
-        denom_dep = adj.sum(2).unsqueeze(2) + 1
+        denom_syn = adj.sum(2).unsqueeze(2) + 1
         attn_tensor = self.attn(gcn_inputs, gcn_inputs, src_mask)
         attn_adj_list = [attn_adj.squeeze(1) for attn_adj in torch.split(attn_tensor, 1, dim=1)]
         multi_head_list = []
-        outputs_dep = None
-        adj_ag = None
+        outputs_syn = None
+        adj_sem = None
         
         # * Average Multi-head Attention matrixes
         for i in range(self.attention_heads):
-            if adj_ag is None:
-                adj_ag = attn_adj_list[i]
+            if adj_sem is None:
+                adj_sem = attn_adj_list[i]
             else:
-                adj_ag += attn_adj_list[i]
-        adj_ag = adj_ag / self.attention_heads  # bug fix！
+                adj_sem += attn_adj_list[i]
+        adj_sem = adj_sem / self.attention_heads  # bug fix！
 
-        for j in range(adj_ag.size(0)):
-            adj_ag[j] -= torch.diag(torch.diag(adj_ag[j]))
-            adj_ag[j] += torch.eye(adj_ag[j].size(0)).cuda()
-        adj_ag = src_mask.transpose(1, 2) * adj_ag
+        for j in range(adj_sem.size(0)):
+            adj_sem[j] -= torch.diag(torch.diag(adj_sem[j]))
+            adj_sem[j] += torch.eye(adj_sem[j].size(0)).cuda()
+        adj_sem = src_mask.transpose(1, 2) * adj_sem
 
-        denom_ag = adj_ag.sum(2).unsqueeze(2) + 1
-        outputs_ag = gcn_inputs
-        outputs_dep = gcn_inputs
+        denom_sem = adj_sem.sum(2).unsqueeze(2) + 1
+        H_syn = None
+        H_sem = None
+        outputs_sem = gcn_inputs
+        outputs_syn = gcn_inputs
 
         for l in range(self.layers):
             # ************SynGCN*************
-            Ax_dep = adj.bmm(outputs_dep)
-            AxW_dep = self.W[l](Ax_dep)
-            AxW_dep = AxW_dep / denom_dep
-            gAxW_dep = F.relu(AxW_dep)
+            Ax_syn = adj.bmm(outputs_syn)
+            AxW_syn = self.W[l](Ax_syn)
+            AxW_syn = AxW_syn / denom_syn
+            # gAxW_dep = F.relu(AxW_dep)
+            H_syn = self.leakyrelu(AxW_syn)
 
             # ************SemGCN*************
-            Ax_ag = adj_ag.bmm(outputs_ag)
-            AxW_ag = self.weight_list[l](Ax_ag)
-            AxW_ag = AxW_ag / denom_ag
-            gAxW_ag = F.relu(AxW_ag)
+            Ax_sem = adj_sem.bmm(outputs_sem)
+            AxW_sem = self.weight_list[l](Ax_sem)
+            AxW_sem = AxW_sem / denom_sem
+            # gAxW_ag = F.relu(AxW_ag)
+            H_sem = self.leakyrelu(AxW_sem)
 
-            # * mutual Biaffine module
-            A1 = F.softmax(torch.bmm(torch.matmul(gAxW_dep, self.affine1), torch.transpose(gAxW_ag, 1, 2)), dim=-1)
-            A2 = F.softmax(torch.bmm(torch.matmul(gAxW_ag, self.affine2), torch.transpose(gAxW_dep, 1, 2)), dim=-1)
-            gAxW_dep, gAxW_ag = torch.bmm(A1, gAxW_ag), torch.bmm(A2, gAxW_dep)
-            outputs_dep = self.gcn_drop(gAxW_dep) if l < self.layers - 1 else gAxW_dep
-            outputs_ag = self.gcn_drop(gAxW_ag) if l < self.layers - 1 else gAxW_ag
+            outputs_syn = self.gcn_drop(H_syn) if l < self.layers - 1 else H_syn
+            outputs_sem = self.gcn_drop(H_sem) if l < self.layers - 1 else H_sem
 
-        return outputs_ag, outputs_dep, adj_ag, pooled_output
+        return H_syn, H_sem, adj_sem, pooled_output
 
 
 def attention(query, key, mask=None, dropout=None):
